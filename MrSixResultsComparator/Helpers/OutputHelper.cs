@@ -1,50 +1,49 @@
 using Spectre.Console;
-using MrSixResultsComparator.Models;
+using MrSixResultsComparator.Core.Models;
 
 namespace MrSixResultsComparator.Helpers;
 
 public static class OutputHelper
 {
-    public static void DisplayDifference(
-        SearchParameter searchParam,
-        int controlCount,
-        int testCount,
-        List<int> onlyInControl,
-        List<int> onlyInTest,
-        List<int> inBoth)
+    public static void DisplayDifference(ComparisonResult result)
     {
         AnsiConsole.MarkupLine($"[red]═══ DIFF FOUND ═══[/]");
-        AnsiConsole.MarkupLine($"[yellow]SearcherUserId:[/] {searchParam.SearcherUserId}");
-        AnsiConsole.MarkupLine($"[yellow]SiteCode:[/] {searchParam.SiteCode} | [yellow]CallId:[/] {searchParam.CallId}");
-        AnsiConsole.MarkupLine($"[yellow]CallTime:[/] {searchParam.CallTime}");
+        AnsiConsole.MarkupLine($"[yellow]SearcherUserId:[/] {result.SearcherUserId}");
+        AnsiConsole.MarkupLine($"[yellow]SiteCode:[/] {result.SiteCode} | [yellow]CallId:[/] {result.CallId}");
+        AnsiConsole.MarkupLine($"[yellow]CallTime:[/] {result.CallTime}");
         AnsiConsole.WriteLine();
         
-        AnsiConsole.MarkupLine($"[cyan]Control Result Count:[/] {controlCount}");
-        AnsiConsole.MarkupLine($"[cyan]Test Result Count:[/] {testCount}");
+        AnsiConsole.MarkupLine($"[cyan]Control Result Count:[/] {result.ControlCount}");
+        AnsiConsole.MarkupLine($"[cyan]Test Result Count:[/] {result.TestCount}");
         AnsiConsole.WriteLine();
         
-        if (onlyInControl.Any())
+        if (result.OnlyInControl.Any())
         {
-            AnsiConsole.MarkupLine($"[red]UserIds only in Control ({onlyInControl.Count}):[/]");
-            AnsiConsole.MarkupLine($"  {string.Join(", ", onlyInControl)}");
+            AnsiConsole.MarkupLine($"[red]UserIds only in Control ({result.OnlyInControl.Count}):[/]");
+            AnsiConsole.MarkupLine($"  {string.Join(", ", result.OnlyInControl)}");
             AnsiConsole.WriteLine();
         }
         
-        if (onlyInTest.Any())
+        if (result.OnlyInTest.Any())
         {
-            AnsiConsole.MarkupLine($"[blue]UserIds only in Test ({onlyInTest.Count}):[/]");
-            AnsiConsole.MarkupLine($"  {string.Join(", ", onlyInTest)}");
+            AnsiConsole.MarkupLine($"[blue]UserIds only in Test ({result.OnlyInTest.Count}):[/]");
+            AnsiConsole.MarkupLine($"  {string.Join(", ", result.OnlyInTest)}");
             AnsiConsole.WriteLine();
         }
         
-        if (inBoth.Any())
+        if (result.InBoth.Any())
         {
-            AnsiConsole.MarkupLine($"[green]UserIds in both ({inBoth.Count}):[/]");
-            AnsiConsole.MarkupLine($"  {string.Join(", ", inBoth)}");
+            AnsiConsole.MarkupLine($"[green]UserIds in both ({result.InBoth.Count}):[/]");
+            AnsiConsole.MarkupLine($"  {string.Join(", ", result.InBoth)}");
             AnsiConsole.WriteLine();
         }
         
         Console.WriteLine(new string('═', 60));
         Console.WriteLine();
+    }
+
+    public static void DisplayMatch(ComparisonResult result)
+    {
+        AnsiConsole.MarkupLine($"[green]✓[/] Match - SearcherUserId: {result.SearcherUserId} ({result.ControlCount} results)");
     }
 }

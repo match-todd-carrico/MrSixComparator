@@ -3,10 +3,10 @@ using MrSIXProxyV2.ResultsV4;
 using MrSIXProxyV2.SearchCriteria;
 using Newtonsoft.Json;
 using Serilog;
-using MrSixResultsComparator.Models;
-using MrSixResultsComparator.Configuration;
+using MrSixResultsComparator.Core.Models;
+using MrSixResultsComparator.Core.Configuration;
 
-namespace MrSixResultsComparator.Services;
+namespace MrSixResultsComparator.Core.Services;
 
 public class StackSearchService
 {

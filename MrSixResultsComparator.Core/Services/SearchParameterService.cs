@@ -1,10 +1,9 @@
 using Microsoft.Data.SqlClient;
 using Dapper;
 using Serilog;
-using Spectre.Console;
-using MrSixResultsComparator.Models;
+using MrSixResultsComparator.Core.Models;
 
-namespace MrSixResultsComparator.Services;
+namespace MrSixResultsComparator.Core.Services;
 
 public class SearchParameterService
 {
@@ -54,14 +53,12 @@ public class SearchParameterService
                     param.Description = $"Site:{param.SiteCode} User:{param.SearcherUserId} CallId:{param.CallId}";
                 }
                 
-                AnsiConsole.MarkupLine($"[green]Loaded {results.Count} search parameters from database[/]");
                 Log.Information("Loaded {Count} search parameters from database", results.Count);
                 return results;
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]ERROR loading search parameters:[/] {ex.Message}");
             Log.Error(ex, "Failed to load search parameters from database");
             throw;
         }

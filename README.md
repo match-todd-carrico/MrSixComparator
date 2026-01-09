@@ -1,80 +1,191 @@
 # MrSix Results Comparator
 
-A tool for comparing StackSearch results between two MrSix server environments (Control vs Test).
+A powerful tool to compare search results between Control and Test MrSix environments with both CLI and modern desktop UI options.
 
-## Project Structure
+## 🎯 Project Structure
 
+The solution consists of three projects:
+
+### 1. **MrSixResultsComparator.Core** (Class Library)
+Shared business logic used by both console and desktop applications:
+- **Configuration**: Application settings and configuration
+- **Models**: Data models (SearchParameter, ComparisonResult, etc.)
+- **Services**: Core business services
+  - `ComparisonService`: Main comparison logic with event notifications
+  - `StackSearchService`: Execute StackSearch operations
+  - `SearchParameterService`: Database access for search parameters
+  - `ShardValidationService`: Shard validation logic
+  - `MrSixContextService`: HTTP communication with MrSix servers
+  - `LoggingService`: Serilog configuration and management
+
+### 2. **MrSixResultsComparator** (Console Application)
+Traditional console application with Spectre.Console for beautiful CLI output:
+- Real-time progress display
+- Color-coded difference highlighting
+- Summary tables grouped by SiteCode
+- Detailed Serilog file logging for troubleshooting
+
+**Best for**: Quick comparisons, CI/CD integration, scripting
+
+### 3. **MrSixResultsComparator.BlazorApp** (WPF + Blazor Hybrid Desktop App)
+Modern desktop application with web-based UI:
+- **Real-time progress tracking** with visual progress bar
+- **Persistent results** that remain visible between runs
+- **Advanced filtering** by SiteCode, SearcherUserId, or match status
+- **Interactive result tables** showing detailed differences
+- **Modern, responsive UI** with professional styling
+- **Configuration panel** to modify settings without editing config files
+
+**Best for**: Regular usage, detailed analysis, result comparison history
+
+## 🚀 Getting Started
+
+### Prerequisites
+- .NET 10.0 SDK
+- SQL Server access to SearchData database
+- Network access to MrSix servers
+
+### Running the Console Application
+
+```bash
+cd MrSixResultsComparator
+dotnet run
 ```
-MrSixResultsComparator/
-├── Program.cs                          # Application entry point
-├── Configuration/
-│   └── AppConfiguration.cs            # Application configuration settings
-├── Models/
-│   ├── ComparisonResult.cs            # Model for comparison results
-│   ├── SearchIndexEngineStatus.cs     # Model for engine status
-│   └── SearchParameter.cs             # Model for search parameters
-├── Services/
-│   ├── ComparisonService.cs           # Orchestrates the comparison logic
-│   ├── LoggingService.cs              # Manages Serilog configuration
-│   ├── MrSixContextService.cs         # Communicates with MrSix servers
-│   ├── SearchParameterService.cs      # Retrieves search parameters from database
-│   ├── ShardValidationService.cs      # Validates shard configuration
-│   └── StackSearchService.cs          # Executes StackSearch operations
-└── Helpers/
-    ├── OutputHelper.cs                # Console output formatting
-    └── SummaryHelper.cs               # Summary report generation
+
+### Running the Blazor Desktop Application
+
+```bash
+cd MrSixResultsComparator.BlazorApp
+dotnet run
 ```
 
-## Architecture
+Or build and run the executable:
 
-### Configuration Layer
-- **AppConfiguration**: Centralizes all configuration settings including connection strings, server names, and runtime parameters.
+```bash
+dotnet build -c Release
+.\bin\Release\net10.0-windows\MrSixResultsComparator.BlazorApp.exe
+```
 
-### Models Layer
-- **SearchParameter**: Represents search criteria from the database
-- **ComparisonResult**: Tracks whether a search matched between environments
-- **SearchIndexEngineStatus**: Represents the status response from MrSix servers
+## ⚙️ Configuration
 
-### Services Layer
-- **LoggingService**: Initializes and manages structured logging with Serilog
-- **MrSixContextService**: HTTP client for MrSix server communication
-- **ShardValidationService**: Validates that both servers are configured for the same shard
-- **SearchParameterService**: Queries the database for search parameters to compare
-- **StackSearchService**: Executes StackSearch operations and extracts results
-- **ComparisonService**: Main orchestrator that coordinates the comparison workflow
+Configuration is managed in `AppConfiguration.cs`:
 
-### Helpers Layer
-- **OutputHelper**: Formats console output for differences found
-- **SummaryHelper**: Generates and displays summary reports by SiteCode
+```csharp
+public string MrSixControl { get; set; } = "DA1MASC805";  // Control server
+public string MrSixTest { get; set; } = "DA1MASC804";     // Test server
+public int MaxParallelism { get; set; } = 5;              // Parallel execution limit
+public string SearchDataConnectionString { get; set; } = "...";
+```
 
-## Configuration
+In the **Blazor Desktop App**, you can modify these settings directly in the UI configuration panel.
 
-Edit `Configuration/AppConfiguration.cs` to configure:
-- Database connection string
-- Control server name
-- Test server name
-- Maximum parallelism level
+## 📊 Features
 
-## Workflow
+### Console App Features
+- ✅ Spectre.Console beautiful CLI output
+- ✅ Real-time progress during comparison
+- ✅ Color-coded match/difference display
+- ✅ Detailed summary tables by SiteCode
+- ✅ Comprehensive JSON log files
+- ✅ Suitable for automation and scripting
 
-1. **Initialize** - Load configuration and set up logging
-2. **Validate** - Check that both servers are on the same shard
-3. **Load Parameters** - Retrieve search parameters from database
-4. **Compare** - Execute searches on both servers in parallel and compare results
-5. **Report** - Display differences and generate summary report
+### Blazor Desktop App Features
+- ✅ Modern web-based UI in desktop application
+- ✅ Real-time progress bar with status messages
+- ✅ Persistent results visible after completion
+- ✅ Filter by SiteCode, SearcherUserId, or match status
+- ✅ Detailed inline difference display
+- ✅ Summary cards showing key metrics
+- ✅ Edit configuration without code changes
+- ✅ Professional styling with gradients and shadows
+- ✅ Responsive layout that adapts to window size
 
-## Output
+## 🔍 How It Works
 
-- **Console**: Real-time progress and difference reports with color-coded output
-- **Log Files**: Structured JSON logs in `logs/` directory with detailed comparison data
+1. **Validation**: Validates that Control and Test servers are on the same Shard
+2. **Data Loading**: Retrieves search parameters from SearchData database
+3. **Parallel Execution**: Runs comparisons in parallel (configurable)
+4. **Result Comparison**: Compares UserIds returned by each environment
+5. **Reporting**: Displays/stores results with detailed differences
 
-## Features
+## 📈 Output Examples
 
-- Parallel execution for faster comparisons
-- Detailed difference reporting showing:
-  - UserIds only in Control
-  - UserIds only in Test
-  - UserIds in both
-- Summary report grouped by SiteCode
-- Comprehensive structured logging
-- Retry logic for server status checks
+### Console Output
+```
+✓ Match - SearcherUserId: 12345 (25 results)
+
+═══ DIFF FOUND ═══
+SearcherUserId: 67890
+SiteCode: 100 | CallId: abc123...
+CallTime: 2026-01-09 10:30:00
+
+Control Result Count: 25
+Test Result Count: 23
+
+UserIds only in Control (2):
+  11111, 22222
+
+UserIds in both (23):
+  33333, 44444, 55555...
+```
+
+### Blazor Desktop UI
+- **Header**: Gradient header with app title
+- **Configuration Panel**: Editable settings for servers and parallelism
+- **Progress Section**: Real-time progress bar showing current/total
+- **Summary Cards**: Total comparisons, matched, mismatched, success rate
+- **Results Tables**: Grouped by SiteCode with expandable difference details
+- **Filter Bar**: Search and filter results dynamically
+
+## 📝 Logging
+
+Both applications use Serilog for detailed logging:
+- Log files: `logs/stacksearch-comparison-YYYYMMDD-HHmmss.json`
+- Structured JSON format for easy parsing
+- Includes session information, server details, and all comparison results
+
+## 🛠️ Development
+
+### Building All Projects
+
+```bash
+dotnet build
+```
+
+### Running Tests (if added)
+
+```bash
+dotnet test
+```
+
+## 💡 Use Cases
+
+**Use Console App When:**
+- Running automated comparisons in CI/CD
+- Quick one-off comparisons
+- Integration with scripts or automation tools
+- You prefer terminal-based workflows
+
+**Use Blazor Desktop App When:**
+- Regular daily usage
+- Need to review results over time
+- Want to adjust configuration frequently
+- Prefer graphical interface
+- Need to filter and analyze results interactively
+- Presenting results to stakeholders
+
+## 🤝 Contributing
+
+The code is well-structured for extensibility:
+- Add new services to `Core/Services/`
+- Extend models in `Core/Models/`
+- Add UI components in `BlazorApp/Components/` or `BlazorApp/Pages/`
+- Console helpers in `MrSixResultsComparator/Helpers/`
+
+## 📄 License
+
+Internal use only.
+
+---
+
+**Questions?** Contact the development team.

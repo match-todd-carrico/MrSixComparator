@@ -1,4 +1,4 @@
-namespace MrSixResultsComparator.Configuration;
+namespace MrSixResultsComparator.Core.Configuration;
 
 public class AppConfiguration
 {

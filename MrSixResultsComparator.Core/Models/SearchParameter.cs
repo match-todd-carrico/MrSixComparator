@@ -1,6 +1,6 @@
 using MrSIXProxyV2.Input;
 
-namespace MrSixResultsComparator.Models;
+namespace MrSixResultsComparator.Core.Models;
 
 public class SearchParameter
 {

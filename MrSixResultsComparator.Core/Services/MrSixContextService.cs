@@ -1,8 +1,8 @@
 using System.Text.Json;
 using System.Text;
-using MrSixResultsComparator.Models;
+using MrSixResultsComparator.Core.Models;
 
-namespace MrSixResultsComparator.Services;
+namespace MrSixResultsComparator.Core.Services;
 
 public class MrSixContextService
 {

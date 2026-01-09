@@ -1,6 +1,6 @@
 using Spectre.Console;
 using Serilog;
-using MrSixResultsComparator.Models;
+using MrSixResultsComparator.Core.Models;
 
 namespace MrSixResultsComparator.Helpers;
 

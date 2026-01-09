@@ -1,0 +1,308 @@
+@page "/"
+@using MrSixResultsComparator.Core.Configuration
+@using MrSixResultsComparator.Core.Services
+@using MrSixResultsComparator.Core.Models
+@using MrSixResultsComparator.BlazorApp.Data
+@inject AppConfiguration Config
+@inject MrSixContextService ContextService
+@inject ShardValidationService ShardValidationService
+@inject SearchParameterService SearchParameterService
+@inject StackSearchService StackSearchService
+@inject ComparisonStateService StateService
+@implements IDisposable
+
+<div class="header">
+    <div class="container">
+        <h1>🔍 MrSix Results Comparator</h1>
+        <p>Compare search results between Control and Test environments</p>
+    </div>
+</div>
+
+<div class="container">
+    <div class="card">
+        <h2>Configuration</h2>
+        <div class="config-grid">
+            <div class="form-group">
+                <label>Control Server</label>
+                <input type="text" @bind="Config.MrSixControl" disabled="@StateService.IsRunning" />
+            </div>
+            <div class="form-group">
+                <label>Test Server</label>
+                <input type="text" @bind="Config.MrSixTest" disabled="@StateService.IsRunning" />
+            </div>
+            <div class="form-group">
+                <label>Max Parallelism</label>
+                <input type="number" @bind="Config.MaxParallelism" min="1" max="20" disabled="@StateService.IsRunning" />
+            </div>
+            <div class="form-group">
+                <label>Connection String</label>
+                <input type="text" @bind="Config.SearchDataConnectionString" disabled="@StateService.IsRunning" />
+            </div>
+        </div>
+        
+        <div style="display: flex; gap: 10px;">
+            <button class="btn btn-primary" @onclick="StartComparison" disabled="@StateService.IsRunning">
+                @if (StateService.IsRunning)
+                {
+                    <span>⏳ Running...</span>
+                }
+                else
+                {
+                    <span>▶️ Start Comparison</span>
+                }
+            </button>
+            <button class="btn btn-secondary" @onclick="ClearResults" disabled="@StateService.IsRunning">
+                🗑️ Clear Results
+            </button>
+        </div>
+    </div>
+
+    @if (StateService.IsRunning || StateService.Total > 0)
+    {
+        <div class="card">
+            <h2>Progress</h2>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: @GetProgressPercentage()%">
+                        @StateService.Current / @StateService.Total
+                    </div>
+                </div>
+                <p style="margin-top: 10px; color: #666;">@StateService.Message</p>
+            </div>
+        </div>
+    }
+
+    @if (StateService.Results.Any())
+    {
+        <div class="card">
+            <h2>Summary</h2>
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <h3>Total Comparisons</h3>
+                    <p class="value">@StateService.Results.Count</p>
+                </div>
+                <div class="summary-card success">
+                    <h3>Matched</h3>
+                    <p class="value" style="color: var(--success-color);">@StateService.Results.Count(r => r.Matched)</p>
+                </div>
+                <div class="summary-card danger">
+                    <h3>Mismatched</h3>
+                    <p class="value" style="color: var(--danger-color);">@StateService.Results.Count(r => !r.Matched)</p>
+                </div>
+                <div class="summary-card">
+                    <h3>Success Rate</h3>
+                    <p class="value">@GetSuccessRate()%</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Results by Site Code</h2>
+            <div class="filter-bar">
+                <input type="text" class="search-input" placeholder="Filter by SiteCode or SearcherUserId..." @bind="filterText" @bind:event="oninput" />
+                <select @bind="filterStatus" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    <option value="all">All Results</option>
+                    <option value="matched">Matched Only</option>
+                    <option value="mismatched">Mismatched Only</option>
+                </select>
+            </div>
+
+            @foreach (var siteGroup in GetFilteredGroupedResults())
+            {
+                var total = siteGroup.Count();
+                var matched = siteGroup.Count(r => r.Matched);
+                var mismatched = total - matched;
+
+                <div style="margin-bottom: 30px;">
+                    <h3 style="color: var(--primary-color); margin-bottom: 15px;">
+                        SiteCode: @siteGroup.Key - 
+                        <span style="color: var(--success-color);">@matched matched</span> / 
+                        <span style="color: var(--danger-color);">@mismatched mismatched</span>
+                    </h3>
+                    
+                    <table class="results-table">
+                        <thead>
+                            <tr>
+                                <th>Status</th>
+                                <th>Searcher User ID</th>
+                                <th>Control Count</th>
+                                <th>Test Count</th>
+                                <th>Call ID</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var result in siteGroup.OrderBy(r => r.Matched).ThenBy(r => r.SearcherUserId))
+                            {
+                                <tr>
+                                    <td>
+                                        @if (result.Matched)
+                                        {
+                                            <span class="badge badge-success">✓ Match</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge badge-danger">✗ Diff</span>
+                                        }
+                                    </td>
+                                    <td><strong>@result.SearcherUserId</strong></td>
+                                    <td>@result.ControlCount</td>
+                                    <td>@result.TestCount</td>
+                                    <td style="font-family: monospace; font-size: 0.85rem;">@result.CallId.ToString().Substring(0, 8)...</td>
+                                    <td>
+                                        @if (!result.Matched)
+                                        {
+                                            <div class="diff-details">
+                                                @if (result.OnlyInControl.Any())
+                                                {
+                                                    <div class="diff-section">
+                                                        <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count):</strong>
+                                                        <span>@string.Join(", ", result.OnlyInControl.Take(10))@(result.OnlyInControl.Count > 10 ? "..." : "")</span>
+                                                    </div>
+                                                }
+                                                @if (result.OnlyInTest.Any())
+                                                {
+                                                    <div class="diff-section">
+                                                        <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count):</strong>
+                                                        <span>@string.Join(", ", result.OnlyInTest.Take(10))@(result.OnlyInTest.Count > 10 ? "..." : "")</span>
+                                                    </div>
+                                                }
+                                                @if (result.InBoth.Any())
+                                                {
+                                                    <div class="diff-section">
+                                                        <strong style="color: var(--success-color);">In Both (@result.InBoth.Count):</strong>
+                                                        <span>@string.Join(", ", result.InBoth.Take(10))@(result.InBoth.Count > 10 ? "..." : "")</span>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <span style="color: #999;">No differences</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+
+    @if (errorMessage != null)
+    {
+        <div class="card" style="border-left: 4px solid var(--danger-color);">
+            <h2 style="color: var(--danger-color);">Error</h2>
+            <p>@errorMessage</p>
+        </div>
+    }
+</div>
+
+@code {
+    private string? errorMessage;
+    private string filterText = "";
+    private string filterStatus = "all";
+
+    protected override void OnInitialized()
+    {
+        StateService.StateChanged += OnStateChanged;
+        LoggingService.Initialize(Config);
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task StartComparison()
+    {
+        try
+        {
+            errorMessage = null;
+            StateService.ClearResults();
+            StateService.SetRunning(true);
+            StateService.SetProgress(0, 0, "Initializing...");
+
+            // Validate and get ShardId
+            var shardId = ShardValidationService.ValidateAndGetShardId(Config.MrSixControl, Config.MrSixTest);
+            StateService.SetProgress(0, 0, $"Retrieved ShardId: {shardId}");
+
+            // Get search parameters
+            var searchParameters = SearchParameterService.GetSearchParameters(shardId);
+            StateService.SetProgress(0, searchParameters.Count, $"Loaded {searchParameters.Count} search parameters");
+
+            // Execute comparisons
+            var comparisonService = new ComparisonService(Config, StackSearchService);
+            
+            // Wire up events
+            comparisonService.ProgressUpdated += (sender, args) =>
+            {
+                StateService.SetProgress(args.Current, args.Total, args.Message);
+            };
+
+            comparisonService.ComparisonCompleted += (sender, args) =>
+            {
+                StateService.AddResult(args.Result);
+            };
+
+            await comparisonService.CompareSearchResults(searchParameters);
+            
+            StateService.SetProgress(searchParameters.Count, searchParameters.Count, "Comparison complete!");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error during comparison: {ex.Message}";
+        }
+        finally
+        {
+            StateService.SetRunning(false);
+            await LoggingService.CloseAndFlush();
+        }
+    }
+
+    private void ClearResults()
+    {
+        StateService.ClearResults();
+        errorMessage = null;
+    }
+
+    private double GetProgressPercentage()
+    {
+        if (StateService.Total == 0) return 0;
+        return (double)StateService.Current / StateService.Total * 100;
+    }
+
+    private string GetSuccessRate()
+    {
+        if (StateService.Results.Count == 0) return "0.0";
+        var rate = (double)StateService.Results.Count(r => r.Matched) / StateService.Results.Count * 100;
+        return rate.ToString("F1");
+    }
+
+    private IEnumerable<IGrouping<short, ComparisonResult>> GetFilteredGroupedResults()
+    {
+        var filtered = StateService.Results.AsEnumerable();
+
+        // Apply status filter
+        if (filterStatus == "matched")
+            filtered = filtered.Where(r => r.Matched);
+        else if (filterStatus == "mismatched")
+            filtered = filtered.Where(r => !r.Matched);
+
+        // Apply text filter
+        if (!string.IsNullOrWhiteSpace(filterText))
+        {
+            filtered = filtered.Where(r => 
+                r.SiteCode.ToString().Contains(filterText, StringComparison.OrdinalIgnoreCase) ||
+                r.SearcherUserId.ToString().Contains(filterText, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return filtered.GroupBy(r => r.SiteCode).OrderBy(g => g.Key);
+    }
+
+    public void Dispose()
+    {
+        StateService.StateChanged -= OnStateChanged;
+    }
+}

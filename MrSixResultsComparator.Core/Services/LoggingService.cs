@@ -1,8 +1,8 @@
 using Serilog;
 using Serilog.Formatting.Compact;
-using MrSixResultsComparator.Configuration;
+using MrSixResultsComparator.Core.Configuration;
 
-namespace MrSixResultsComparator.Services;
+namespace MrSixResultsComparator.Core.Services;
 
 public class LoggingService
 {
@@ -28,9 +28,7 @@ public class LoggingService
     
     public static async Task CloseAndFlush()
     {
-        var logFileName = $"logs/stacksearch-comparison-{DateTime.Now:yyyyMMdd-HHmmss}.json";
         Log.Information("StackSearch comparison session completed");
-        Log.Information("Log file saved to: {LogFileName}", logFileName);
         await Log.CloseAndFlushAsync();
     }
 }
