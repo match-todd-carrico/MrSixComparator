@@ -20,7 +20,7 @@ public class ComparisonResultEventArgs : EventArgs
 public class ComparisonService
 {
     private readonly AppConfiguration _config;
-    private readonly StackSearchService _stackSearchService;
+    private readonly Dictionary<string, ISearchService> _searchServices;
     private readonly ConcurrentBag<ComparisonResult> _comparisonResults;
 
     public event EventHandler<ComparisonProgressEventArgs>? ProgressUpdated;
@@ -29,27 +29,67 @@ public class ComparisonService
 
     public IReadOnlyList<ComparisonResult> Results => _comparisonResults.ToList();
 
-    public ComparisonService(AppConfiguration config, StackSearchService stackSearchService)
+    public ComparisonService(
+        AppConfiguration config,
+        StackSearchService stackSearchService,
+        OnePushService onePushService,
+        LitBatchService litBatchService,
+        LitSearchService litSearchService,
+        MoreLikeThisService moreLikeThisService,
+        OneWayService oneWayService,
+        ExpertPicksService expertPicksService,
+        JustForYouService justForYouService,
+        MatchPicksService matchPicksService,
+        ReverseService reverseService,
+        SearchWowService searchWowService,
+        TwoWayService twoWayService)
     {
         _config = config;
-        _stackSearchService = stackSearchService;
         _comparisonResults = new ConcurrentBag<ComparisonResult>();
+        
+        // Map ClassName to service instances
+        _searchServices = new Dictionary<string, ISearchService>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "Stack", stackSearchService },
+            { "SearchV4.OnePush", onePushService },
+            { "SearchHighlight.LitBatch", litBatchService },
+            { "SearchHighlight.LitSearch", litSearchService },
+            { "SearchV4.MoreLikeThis", moreLikeThisService },
+            { "SearchV4.OneWay", oneWayService },
+            { "SearchV4.Recommended.ExpertPicks", expertPicksService },
+            { "SearchV4.Recommended.JustForYou", justForYouService },
+            { "SearchV4.Recommended.MatchPicks", matchPicksService },
+            { "SearchV4.Reverse", reverseService },
+            { "SearchV4.SearchWow", searchWowService },
+            { "SearchV4.TwoWay", twoWayService }
+        };
     }
 
     public async Task CompareSearchResults(List<SearchParameter> searchParameters)
     {
-        int total = searchParameters.Count;
+        // Filter search parameters based on enabled services
+        var enabledSearchParameters = searchParameters
+            .Where(sp => _config.EnabledSearchServices.Contains(sp.ClassName))
+            .ToList();
+        
+        int skippedCount = searchParameters.Count - enabledSearchParameters.Count;
+        if (skippedCount > 0)
+        {
+            Log.Information("Skipping {SkippedCount} search parameters with disabled service types", skippedCount);
+        }
+
+        int total = enabledSearchParameters.Count;
         int current = 0;
 
         OnProgressUpdated(new ComparisonProgressEventArgs 
         { 
             Current = 0, 
             Total = total, 
-            Message = "Starting comparison..." 
+            Message = $"Starting comparison of {total} searches (skipped {skippedCount} disabled services)..." 
         });
 
         await Parallel.ForEachAsync(
-            searchParameters, 
+            enabledSearchParameters, 
             new ParallelOptions { MaxDegreeOfParallelism = _config.MaxParallelism }, 
             async (searchParam, ct) =>
             {
@@ -74,6 +114,12 @@ public class ComparisonService
                 }
             });
 
+        // Retry mismatched comparisons if enabled
+        if (_config.AutoRetryMismatches)
+        {
+            await RetryMismatchedComparisons(enabledSearchParameters);
+        }
+
         OnProgressUpdated(new ComparisonProgressEventArgs 
         { 
             Current = total, 
@@ -82,17 +128,132 @@ public class ComparisonService
         });
     }
 
+    private async Task RetryMismatchedComparisons(List<SearchParameter> originalSearchParameters)
+    {
+        // Get all mismatched results
+        var mismatchedResults = _comparisonResults.Where(r => !r.Matched).ToList();
+        
+        if (!mismatchedResults.Any())
+        {
+            Log.Information("No mismatches to retry");
+            return;
+        }
+
+        int retryCount = mismatchedResults.Count;
+        int current = 0;
+
+        Log.Information("Retrying {RetryCount} mismatched comparisons", retryCount);
+        OnProgressUpdated(new ComparisonProgressEventArgs 
+        { 
+            Current = 0, 
+            Total = retryCount, 
+            Message = $"Retrying {retryCount} mismatched comparisons to verify repeatability..." 
+        });
+
+        await Parallel.ForEachAsync(
+            mismatchedResults,
+            new ParallelOptions { MaxDegreeOfParallelism = _config.MaxParallelism },
+            async (mismatchedResult, ct) =>
+            {
+                try
+                {
+                    // Find the original search parameter
+                    var searchParam = originalSearchParameters.FirstOrDefault(sp => 
+                        sp.SearcherUserId == mismatchedResult.SearcherUserId && 
+                        sp.SiteCode == mismatchedResult.SiteCode &&
+                        sp.ClassName == mismatchedResult.SearchServiceName);
+
+                    if (searchParam != null)
+                    {
+                        await RetryComparisonForResult(mismatchedResult, searchParam);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed to retry search. SiteCode: {SiteCode}, SearcherUserId: {SearcherUserId}",
+                        mismatchedResult.SiteCode, mismatchedResult.SearcherUserId);
+                }
+                finally
+                {
+                    current++;
+                    OnProgressUpdated(new ComparisonProgressEventArgs 
+                    { 
+                        Current = current, 
+                        Total = retryCount, 
+                        Message = $"Retried {current} of {retryCount} mismatches..." 
+                    });
+                }
+            });
+
+        // Log retry summary
+        var confirmedMismatches = mismatchedResults.Count(r => r.RetryMatched == false);
+        var nowMatching = mismatchedResults.Count(r => r.RetryMatched == true);
+        Log.Information("Retry complete. Confirmed mismatches: {Confirmed}, Now matching: {NowMatching}", 
+            confirmedMismatches, nowMatching);
+    }
+
+    private async Task RetryComparisonForResult(ComparisonResult originalResult, SearchParameter searchParam)
+    {
+        Log.Information("Retrying comparison for SearcherUserId: {SearcherUserId}, Service: {Service}", 
+            searchParam.SearcherUserId, searchParam.ClassName);
+        
+        // Get the appropriate search service
+        if (!_searchServices.TryGetValue(searchParam.ClassName, out var searchService))
+        {
+            Log.Error("No search service found for ClassName: {ClassName}", searchParam.ClassName);
+            return;
+        }
+        
+        // Execute Search on both environments again
+        var resultA = await searchService.ExecuteSearch(searchParam, _config.MrSixControl);
+        var resultB = await searchService.ExecuteSearch(searchParam, _config.MrSixTest);
+
+        // Extract UserIds from results
+        var userIdsA = searchService.ExtractUserIds(resultA);
+        var userIdsB = searchService.ExtractUserIds(resultB);
+
+        // Update the original result with retry information
+        originalResult.WasRetried = true;
+        originalResult.RetryControlCount = userIdsA.Count;
+        originalResult.RetryTestCount = userIdsB.Count;
+        originalResult.RetryMatched = userIdsA.Count == userIdsB.Count && 
+                                       !userIdsA.Except(userIdsB).Any() && 
+                                       !userIdsB.Except(userIdsA).Any();
+
+        if (originalResult.RetryMatched == true)
+        {
+            Log.Warning("Retry matched for SearcherUserId: {SearcherUserId} - original mismatch may have been transient", 
+                searchParam.SearcherUserId);
+        }
+        else
+        {
+            Log.Information("Retry confirmed mismatch for SearcherUserId: {SearcherUserId}", 
+                searchParam.SearcherUserId);
+        }
+        
+        // Fire event to update UI
+        OnComparisonCompleted(new ComparisonResultEventArgs { Result = originalResult });
+    }
+
+
     private async Task CompareSearchParameter(SearchParameter searchParam)
     {
-        Log.Information("Starting comparison for {Description}", searchParam.Description);
+        Log.Information("Starting comparison for {Description} using {ClassName}", searchParam.Description, searchParam.ClassName);
         
-        // 1. Execute StackSearch on both environments
-        var resultA = await _stackSearchService.ExecuteStackSearch(searchParam, _config.MrSixControl);
-        var resultB = await _stackSearchService.ExecuteStackSearch(searchParam, _config.MrSixTest);
+        // Get the appropriate search service based on ClassName
+        if (!_searchServices.TryGetValue(searchParam.ClassName, out var searchService))
+        {
+            Log.Error("No search service found for ClassName: {ClassName}", searchParam.ClassName);
+            throw new InvalidOperationException($"No search service registered for ClassName: {searchParam.ClassName}");
+        }
+        
+        // 1. Execute Search on both environments
+        var resultA = await searchService.ExecuteSearch(searchParam, _config.MrSixControl);
+        var resultB = await searchService.ExecuteSearch(searchParam, _config.MrSixTest);
 
         // 2. Extract UserIds from results
-        var userIdsA = _stackSearchService.ExtractUserIds(resultA);
-        var userIdsB = _stackSearchService.ExtractUserIds(resultB);
+        var userIdsA = searchService.ExtractUserIds(resultA);
+        var userIdsB = searchService.ExtractUserIds(resultB);
 
         // 3. Compare UserIds
         var onlyInA = userIdsA.Except(userIdsB).ToList();
@@ -131,7 +292,8 @@ public class ComparisonService
             OnlyInTest = onlyInB,
             InBoth = inBoth,
             CallId = searchParam.CallId,
-            CallTime = searchParam.CallTime
+            CallTime = searchParam.CallTime,
+            SearchServiceName = searchParam.ClassName
         };
         
         _comparisonResults.Add(result);
@@ -157,7 +319,8 @@ public class ComparisonService
             ControlCount = resultCount,
             TestCount = resultCount,
             CallId = searchParam.CallId,
-            CallTime = searchParam.CallTime
+            CallTime = searchParam.CallTime,
+            SearchServiceName = searchParam.ClassName
         };
         
         _comparisonResults.Add(result);
@@ -185,5 +348,10 @@ public class ComparisonService
     public void ClearResults()
     {
         _comparisonResults.Clear();
+    }
+
+    public IReadOnlyList<string> GetAvailableSearchServices()
+    {
+        return _searchServices.Keys.OrderBy(k => k).ToList();
     }
 }

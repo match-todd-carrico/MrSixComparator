@@ -26,7 +26,21 @@ public partial class App : Application
         services.AddSingleton<ShardValidationService>();
         services.AddSingleton<SearchParameterService>(sp => 
             new SearchParameterService(sp.GetRequiredService<AppConfiguration>().SearchDataConnectionString));
+        
+        // Register all search services
         services.AddSingleton<StackSearchService>();
+        services.AddSingleton<OnePushService>();
+        services.AddSingleton<LitBatchService>();
+        services.AddSingleton<LitSearchService>();
+        services.AddSingleton<MoreLikeThisService>();
+        services.AddSingleton<OneWayService>();
+        services.AddSingleton<ExpertPicksService>();
+        services.AddSingleton<JustForYouService>();
+        services.AddSingleton<MatchPicksService>();
+        services.AddSingleton<ReverseService>();
+        services.AddSingleton<SearchWowService>();
+        services.AddSingleton<TwoWayService>();
+        
         services.AddTransient<ComparisonService>();
         
         // Register UI services

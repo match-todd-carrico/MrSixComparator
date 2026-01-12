@@ -1,31 +1,22 @@
 using MrSIXProxyV2.Input;
 using MrSIXProxyV2.ResultsV4;
 using MrSIXProxyV2.SearchCriteria;
-using Newtonsoft.Json;
 using Serilog;
 using MrSixResultsComparator.Core.Models;
 using MrSixResultsComparator.Core.Configuration;
 
 namespace MrSixResultsComparator.Core.Services;
 
-public class StackSearchService : ISearchService
+public class ExpertPicksService : ISearchService
 {
     private readonly AppConfiguration _config;
 
-    public StackSearchService(AppConfiguration config)
+    public ExpertPicksService(AppConfiguration config)
     {
         _config = config;
     }
 
     public Task<SearchResponse<SearchResultRow>> ExecuteSearch(
-        SearchParameter searcher, 
-        string pinnedToServerName, 
-        string? config = null)
-    {
-        return ExecuteStackSearch(searcher, pinnedToServerName, config);
-    }
-
-    public Task<SearchResponse<SearchResultRow>> ExecuteStackSearch(
         SearchParameter searcher, 
         string pinnedToServerName, 
         string? config = null)
@@ -36,37 +27,33 @@ public class StackSearchService : ISearchService
         var args = new RecommendedArgs(
             platformId: 0,
             siteCode: searcher.SiteCode,
-            shardId: searcher.ShardId,
             sessionId: _config.SessionGuid,
             searcherUserId: searcher.SearcherUserId,
             maxRecordsToReturn: searcher.RequestCount,
             usersToRemove: utr,
             searchTypeId: searcher.WhatIfSearchId,
-            geo: searcher.Geo)
+            geo: searcher.Geo,
+            shardId: searcher.ShardId)
         {
             PinnedToServername = pinnedToServerName
         };
 
         args.ExtensionParams = new List<string>(_config.ExtensionParams);
-        args.ExtensionParams.Add("doNotRandom");
-
+        
         args.DynamicArgs ??= new Dictionary<string, string>();
         args.DynamicArgs["OCallId"] = searcher.CallId.ToString();
         args.TimeOutInSeconds = 10000;
         
-        if (config != null)
-            args.DynamicArgs["stackOverride"] = JsonConvert.SerializeObject(config);
-
         try
         {
-            Log.Debug("Executing StackSearch on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
-            response = MrSIXProxyV2.SearchesV5.StackSearch.Execute(args);
-            Log.Debug("StackSearch completed on {ServerName} for CallId: {CallId}. Result count: {ResultCount}", 
+            Log.Debug("Executing ExpertPicks on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
+            response = MrSIXProxyV2.SearchesV5.Recommended.Execute(args);
+            Log.Debug("ExpertPicks completed on {ServerName} for CallId: {CallId}. Result count: {ResultCount}", 
                 pinnedToServerName, searcher.CallId, response?.Results?.Count ?? 0);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "StackSearch failed on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
+            Log.Error(ex, "ExpertPicks failed on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
             throw;
         }
 

@@ -17,27 +17,40 @@ public class SearchParameterService
     public List<SearchParameter> GetSearchParameters(int shardId)
     {
         string query = @"
-            ;With lastFew As (
-        Select -- Top(100)
-            sl.SiteCode
-            ,ss.ShardId
-            ,sl.SearcherUserId
-            ,sl.RequestCount
-            ,sl.WhatIfSearchId
-            ,sl.CallId
-            ,RowNum = ROW_NUMBER() Over (Partition By ss.SiteCode Order By sl.CallTime Desc)
-            ,sl.CallTime
-        From SearchData.dbo.SearchLog sl With (ReadUncommitted)
-        Join Mcore.dbo.cfgSiteCodeShards ss With (ReadUncommitted)
-            On ss.SiteCode = sl.SiteCode
-        Where CallTime Between DateAdd(Hour, -1, GetDate()-1) And DateAdd(Hour, 0, GetDate()-1)
-        And ss.ShardID = @ShardId
-        And sl.SearcherUserId > 999
-        And sl.ReturnedCount > 0
-    )
-    Select *
-    From lastFew
-    Where lastFew.RowNum <= 20
+;With lastFew As (
+    Select
+        lg.SearcherUserID, lg.SearchName, lg.WhatIfSearchId, lg.OtherUserId, lg.ClassName, lg.RequestCount, lg.SiteCode, lg.CallID,
+        lg.GenderGenderSeek,
+		lg.LAge,
+		lg.UAge,
+		lg.LHeight,
+		lg.UHeight,
+		lg.PhotosOnly,
+        lg.SelfString,        
+		lg.SeekString,
+        lg.WeightString,
+		lg.SearchGeoTypeID,
+		lg.CountryCode,
+		lg.StateCode,
+		lg.CityCode,
+		lg.PostalCode,
+		lg.Distance,
+        lg.Latitude,
+        lg.Longitude,
+        lg.CallTime,
+        sh.ShardID,        
+        RowNum = ROW_NUMBER() Over (Partition By lg.SiteCode, lg.ClassName, lg.WhatIfSearchId Order By lg.CallTime Desc)
+    From SearchData.dbo.SearchLog lg With (ReadUncommitted)
+    Join Mcore.dbo.cfgSiteCodeShards sh With (ReadUncommitted)
+        On sh.SiteCode = lg.SiteCode
+    Where CallTime Between DateAdd(Hour, -1, GetDate()-1) And DateAdd(Hour, 0, GetDate()-1)
+    And sh.ShardID = @ShardId
+    And lg.SearcherUserId > 999
+    And lg.ReturnedCount > 0
+)
+Select *
+From lastFew
+Where lastFew.RowNum <= 20
     ";
 
         try

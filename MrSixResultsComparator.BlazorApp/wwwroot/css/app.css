@@ -30,16 +30,22 @@ body {
 }
 
 .container {
-    max-width: 1400px;
+    max-width: 1800px;
+    width: 95%;
     margin: 0 auto;
-    padding: 20px;
+    padding: 20px 30px;
 }
 
 .header {
     background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
     color: white;
-    padding: 20px;
+    padding: 20px 30px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.header .container {
+    max-width: 1800px;
+    width: 95%;
 }
 
 .header h1 {
@@ -207,6 +213,11 @@ body {
     color: var(--danger-color);
 }
 
+.badge-warning {
+    background: #fff4e5;
+    color: var(--warning-color);
+}
+
 .summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -289,4 +300,83 @@ body {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+.services-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.services-grid::-webkit-scrollbar {
+    width: 8px;
+}
+
+.services-grid::-webkit-scrollbar-track {
+    background: var(--background-color);
+    border-radius: 4px;
+}
+
+.services-grid::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.services-grid::-webkit-scrollbar-thumb:hover {
+    background: #ccc;
+}
+
+.service-toggle {
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--background-color);
+    transition: all 0.2s;
+}
+
+.service-toggle:hover {
+    background: #e8e8e8;
+}
+
+.service-toggle label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    margin: 0;
+}
+
+.service-toggle input[type="checkbox"] {
+    margin-right: 10px;
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
+.service-toggle input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+}
+
+.service-toggle span {
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.service-enabled {
+    color: var(--success-color);
+}
+
+.service-disabled {
+    color: #999;
+}
+
+.service-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    background: #e8f4fd;
+    color: var(--primary-color);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    font-family: monospace;
 }

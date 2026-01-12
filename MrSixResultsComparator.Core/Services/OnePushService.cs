@@ -8,11 +8,11 @@ using MrSixResultsComparator.Core.Configuration;
 
 namespace MrSixResultsComparator.Core.Services;
 
-public class StackSearchService : ISearchService
+public class OnePushService : ISearchService
 {
     private readonly AppConfiguration _config;
 
-    public StackSearchService(AppConfiguration config)
+    public OnePushService(AppConfiguration config)
     {
         _config = config;
     }
@@ -22,51 +22,45 @@ public class StackSearchService : ISearchService
         string pinnedToServerName, 
         string? config = null)
     {
-        return ExecuteStackSearch(searcher, pinnedToServerName, config);
+        return ExecuteOnePushSearch(searcher, pinnedToServerName, config);
     }
 
-    public Task<SearchResponse<SearchResultRow>> ExecuteStackSearch(
+    public Task<SearchResponse<SearchResultRow>> ExecuteOnePushSearch(
         SearchParameter searcher, 
         string pinnedToServerName, 
         string? config = null)
     {
         SearchResponse<SearchResultRow>? response = null;
 
-        var utr = new List<int>();
-        var args = new RecommendedArgs(
+        var args = new OnePushArgs(
             platformId: 0,
             siteCode: searcher.SiteCode,
             shardId: searcher.ShardId,
             sessionId: _config.SessionGuid,
             searcherUserId: searcher.SearcherUserId,
             maxRecordsToReturn: searcher.RequestCount,
-            usersToRemove: utr,
-            searchTypeId: searcher.WhatIfSearchId,
             geo: searcher.Geo)
         {
             PinnedToServername = pinnedToServerName
         };
 
         args.ExtensionParams = new List<string>(_config.ExtensionParams);
-        args.ExtensionParams.Add("doNotRandom");
+        args.ExtensionParams.Add("donotrandomizemorepie");
 
         args.DynamicArgs ??= new Dictionary<string, string>();
         args.DynamicArgs["OCallId"] = searcher.CallId.ToString();
         args.TimeOutInSeconds = 10000;
         
-        if (config != null)
-            args.DynamicArgs["stackOverride"] = JsonConvert.SerializeObject(config);
-
         try
         {
-            Log.Debug("Executing StackSearch on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
-            response = MrSIXProxyV2.SearchesV5.StackSearch.Execute(args);
-            Log.Debug("StackSearch completed on {ServerName} for CallId: {CallId}. Result count: {ResultCount}", 
+            Log.Debug("Executing OnePush on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
+            response = MrSIXProxyV2.SearchesV5.OnePush.Execute(args);
+            Log.Debug("OnePush completed on {ServerName} for CallId: {CallId}. Result count: {ResultCount}", 
                 pinnedToServerName, searcher.CallId, response?.Results?.Count ?? 0);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "StackSearch failed on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
+            Log.Error(ex, "OnePush failed on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
             throw;
         }
 

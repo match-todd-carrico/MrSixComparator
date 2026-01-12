@@ -1,18 +1,16 @@
-using MrSIXProxyV2.Input;
 using MrSIXProxyV2.ResultsV4;
 using MrSIXProxyV2.SearchCriteria;
-using Newtonsoft.Json;
-using Serilog;
-using MrSixResultsComparator.Core.Models;
 using MrSixResultsComparator.Core.Configuration;
+using MrSixResultsComparator.Core.Models;
+using Serilog;
 
 namespace MrSixResultsComparator.Core.Services;
 
-public class StackSearchService : ISearchService
+public class OneWayService : ISearchService
 {
     private readonly AppConfiguration _config;
 
-    public StackSearchService(AppConfiguration config)
+    public OneWayService(AppConfiguration config)
     {
         _config = config;
     }
@@ -22,51 +20,47 @@ public class StackSearchService : ISearchService
         string pinnedToServerName, 
         string? config = null)
     {
-        return ExecuteStackSearch(searcher, pinnedToServerName, config);
-    }
-
-    public Task<SearchResponse<SearchResultRow>> ExecuteStackSearch(
-        SearchParameter searcher, 
-        string pinnedToServerName, 
-        string? config = null)
-    {
         SearchResponse<SearchResultRow>? response = null;
 
         var utr = new List<int>();
-        var args = new RecommendedArgs(
+        var args = new OneWayArgs(
             platformId: 0,
             siteCode: searcher.SiteCode,
-            shardId: searcher.ShardId,
             sessionId: _config.SessionGuid,
+            genderGenderSeek: searcher.GenderGenderSeek,
+            geo: searcher.Geo,
+            lAge: searcher.LAge,
+            uAge: searcher.UAge,
+            lHeight: searcher.LHeight,
+            uHeight: searcher.UHeight,
+            onlineNow: false,
+            photosOnly: searcher.PhotosOnly,
+            seekingAnswerIds: searcher.SeekingAnswerIds,
+            imOnlyMiliseconds: 0,
             searcherUserId: searcher.SearcherUserId,
             maxRecordsToReturn: searcher.RequestCount,
-            usersToRemove: utr,
-            searchTypeId: searcher.WhatIfSearchId,
-            geo: searcher.Geo)
+            shardId: searcher.ShardId)
         {
-            PinnedToServername = pinnedToServerName
+            PinnedToServername = pinnedToServerName,
+            UsersToRemove = utr
         };
 
         args.ExtensionParams = new List<string>(_config.ExtensionParams);
-        args.ExtensionParams.Add("doNotRandom");
 
         args.DynamicArgs ??= new Dictionary<string, string>();
         args.DynamicArgs["OCallId"] = searcher.CallId.ToString();
         args.TimeOutInSeconds = 10000;
         
-        if (config != null)
-            args.DynamicArgs["stackOverride"] = JsonConvert.SerializeObject(config);
-
         try
         {
-            Log.Debug("Executing StackSearch on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
-            response = MrSIXProxyV2.SearchesV5.StackSearch.Execute(args);
-            Log.Debug("StackSearch completed on {ServerName} for CallId: {CallId}. Result count: {ResultCount}", 
+            Log.Debug("Executing OneWay on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
+            response = MrSIXProxyV2.SearchesV5.OneWay.Execute(args);
+            Log.Debug("OneWay completed on {ServerName} for CallId: {CallId}. Result count: {ResultCount}", 
                 pinnedToServerName, searcher.CallId, response?.Results?.Count ?? 0);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "StackSearch failed on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
+            Log.Error(ex, "OneWay failed on {ServerName} for CallId: {CallId}", pinnedToServerName, searcher.CallId);
             throw;
         }
 

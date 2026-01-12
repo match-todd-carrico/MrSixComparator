@@ -14,4 +14,24 @@ public class AppConfiguration
     public Guid SessionGuid { get; set; } = Guid.NewGuid();
     
     public List<string> ExtensionParams { get; set; } = new List<string>();
+    
+    // Configuration for which search services are enabled
+    public HashSet<string> EnabledSearchServices { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "Stack",
+        "SearchV4.OnePush",
+        "SearchHighlight.LitBatch",
+        "SearchHighlight.LitSearch",
+        "SearchV4.MoreLikeThis",
+        "SearchV4.OneWay",
+        "SearchV4.Recommended.ExpertPicks",
+        "SearchV4.Recommended.JustForYou",
+        "SearchV4.Recommended.MatchPicks",
+        "SearchV4.Reverse",
+        "SearchV4.SearchWow",
+        "SearchV4.TwoWay"
+    };
+    
+    // Auto-retry mismatched comparisons to verify repeatability
+    public bool AutoRetryMismatches { get; set; } = true;
 }

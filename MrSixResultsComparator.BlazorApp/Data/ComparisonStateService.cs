@@ -5,13 +5,28 @@ namespace MrSixResultsComparator.BlazorApp.Data;
 
 public class ComparisonStateService
 {
-    private List<ComparisonResult> _results = new();
+    private readonly List<ComparisonResult> _results = new();
+    private readonly object _lock = new object();
     
-    public IReadOnlyList<ComparisonResult> Results => _results.AsReadOnly();
+    public IReadOnlyList<ComparisonResult> Results
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _results.ToList(); // Return a snapshot
+            }
+        }
+    }
+    
     public bool IsRunning { get; private set; }
     public int Current { get; private set; }
     public int Total { get; private set; }
     public string Message { get; private set; } = string.Empty;
+    
+    // Cached search parameters
+    public List<SearchParameter>? CachedSearchParameters { get; set; }
+    public int CachedShardId { get; set; }
 
     public event Action? StateChanged;
 
@@ -31,16 +46,29 @@ public class ComparisonStateService
 
     public void AddResult(ComparisonResult result)
     {
-        _results.Add(result);
+        lock (_lock)
+        {
+            _results.Add(result);
+        }
         NotifyStateChanged();
     }
 
     public void ClearResults()
     {
-        _results.Clear();
+        lock (_lock)
+        {
+            _results.Clear();
+        }
         Current = 0;
         Total = 0;
         Message = string.Empty;
+        NotifyStateChanged();
+    }
+    
+    public void SetCachedSearchParameters(List<SearchParameter> parameters, int shardId)
+    {
+        CachedSearchParameters = parameters;
+        CachedShardId = shardId;
         NotifyStateChanged();
     }
 

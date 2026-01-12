@@ -8,6 +8,17 @@
 @inject ShardValidationService ShardValidationService
 @inject SearchParameterService SearchParameterService
 @inject StackSearchService StackSearchService
+@inject OnePushService OnePushService
+@inject LitBatchService LitBatchService
+@inject LitSearchService LitSearchService
+@inject MoreLikeThisService MoreLikeThisService
+@inject OneWayService OneWayService
+@inject ExpertPicksService ExpertPicksService
+@inject JustForYouService JustForYouService
+@inject MatchPicksService MatchPicksService
+@inject ReverseService ReverseService
+@inject SearchWowService SearchWowService
+@inject TwoWayService TwoWayService
 @inject ComparisonStateService StateService
 @implements IDisposable
 
@@ -19,173 +30,402 @@
 </div>
 
 <div class="container">
-    <div class="card">
-        <h2>Configuration</h2>
-        <div class="config-grid">
-            <div class="form-group">
-                <label>Control Server</label>
-                <input type="text" @bind="Config.MrSixControl" disabled="@StateService.IsRunning" />
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+        <div class="card">
+            <h2>Configuration</h2>
+            <div class="config-grid" style="grid-template-columns: 1fr;">
+                <div class="form-group">
+                    <label>Control Server</label>
+                    <input type="text" @bind="Config.MrSixControl" disabled="@(StateService.IsRunning || isInitializing)" />
+                </div>
+                <div class="form-group">
+                    <label>Test Server</label>
+                    <input type="text" @bind="Config.MrSixTest" disabled="@(StateService.IsRunning || isInitializing)" />
+                </div>
+                <div class="form-group">
+                    <label>Max Parallelism</label>
+                    <input type="number" @bind="Config.MaxParallelism" min="1" max="20" disabled="@(StateService.IsRunning || isInitializing)" />
+                </div>
             </div>
-            <div class="form-group">
-                <label>Test Server</label>
-                <input type="text" @bind="Config.MrSixTest" disabled="@StateService.IsRunning" />
-            </div>
-            <div class="form-group">
-                <label>Max Parallelism</label>
-                <input type="number" @bind="Config.MaxParallelism" min="1" max="20" disabled="@StateService.IsRunning" />
-            </div>
-            <div class="form-group">
-                <label>Connection String</label>
-                <input type="text" @bind="Config.SearchDataConnectionString" disabled="@StateService.IsRunning" />
+            
+            <div style="display: flex; gap: 10px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
+                <button class="btn btn-primary" @onclick="StartComparison" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
+                    @if (isInitializing)
+                    {
+                        <span>⏳ Loading...</span>
+                    }
+                    else if (StateService.IsRunning)
+                    {
+                        <span>⏳ Running...</span>
+                    }
+                    else
+                    {
+                        <span>▶️ Start Comparison</span>
+                    }
+                </button>
+                <button class="btn btn-secondary" @onclick="ClearResults" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
+                    🗑️ Clear Results
+                </button>
+                <button class="btn btn-secondary" @onclick="RefreshSearchParameters" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
+                    @if (isRefreshingParameters)
+                    {
+                        <span>⏳ Refreshing...</span>
+                    }
+                    else
+                    {
+                        <span>🔄 Refresh Parameters</span>
+                    }
+                </button>
+                @if (StateService.CachedSearchParameters != null && StateService.CachedSearchParameters.Any())
+                {
+                    <div style="padding: 8px 12px; background-color: #e8f4fd; border-radius: 4px; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;">
+                        <span><strong>Cached:</strong> @StateService.CachedSearchParameters.Count parameters (ShardId: @StateService.CachedShardId)</span>
+                        <a href="/parameters" style="color: var(--primary-color); text-decoration: none; font-weight: 500;">View →</a>
+                    </div>
+                }
             </div>
         </div>
-        
-        <div style="display: flex; gap: 10px;">
-            <button class="btn btn-primary" @onclick="StartComparison" disabled="@StateService.IsRunning">
-                @if (StateService.IsRunning)
+
+        <div class="card">
+            <h2>Search Services</h2>
+            <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">Enable or disable search services for the comparison run</p>
+            <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+                <button class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;" @onclick="EnableAllServices" disabled="@(StateService.IsRunning || isInitializing)">
+                    ✓ Enable All
+                </button>
+                <button class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;" @onclick="DisableAllServices" disabled="@(StateService.IsRunning || isInitializing)">
+                    ✗ Disable All
+                </button>
+            </div>
+            <div class="services-grid" style="grid-template-columns: repeat(2, 1fr); max-height: 280px; overflow-y: auto;">
+                @foreach (var serviceName in GetAllSearchServices())
                 {
-                    <span>⏳ Running...</span>
+                    var isEnabled = Config.EnabledSearchServices.Contains(serviceName);
+                    <div class="service-toggle">
+                        <label>
+                            <input type="checkbox" 
+                                   checked="@isEnabled" 
+                                   @onchange="@((e) => ToggleService(serviceName, (bool)(e.Value ?? false)))"
+                                   disabled="@(StateService.IsRunning || isInitializing)" />
+                            <span class="@(isEnabled ? "service-enabled" : "service-disabled")">@serviceName</span>
+                        </label>
+                    </div>
                 }
-                else
-                {
-                    <span>▶️ Start Comparison</span>
-                }
-            </button>
-            <button class="btn btn-secondary" @onclick="ClearResults" disabled="@StateService.IsRunning">
-                🗑️ Clear Results
-            </button>
+            </div>
+            <div style="margin-top: 10px; padding: 10px; background-color: #f0f0f0; border-radius: 4px;">
+                <strong>Enabled:</strong> @Config.EnabledSearchServices.Count of @GetAllSearchServices().Count
+            </div>
         </div>
     </div>
 
-    @if (StateService.IsRunning || StateService.Total > 0)
+    @if (StateService.IsRunning || StateService.Total > 0 || isInitializing)
     {
         <div class="card">
             <h2>Progress</h2>
             <div class="progress-container">
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: @GetProgressPercentage()%">
-                        @StateService.Current / @StateService.Total
+                @if (isInitializing)
+                {
+                    <div style="text-align: center; padding: 20px;">
+                        <div class="spinner"></div>
+                        <p style="color: var(--primary-color); font-weight: 500;">@initializationMessage</p>
                     </div>
-                </div>
-                <p style="margin-top: 10px; color: #666;">@StateService.Message</p>
+                }
+                else
+                {
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: @GetProgressPercentage()%">
+                            @StateService.Current / @StateService.Total
+                        </div>
+                    </div>
+                    <p style="margin-top: 10px; color: #666;">@StateService.Message</p>
+                }
             </div>
         </div>
     }
 
     @if (StateService.Results.Any())
     {
+        var resultsSnapshot = StateService.Results.ToList(); // Create a snapshot for rendering
+        var matchedCount = resultsSnapshot.Count(r => r.Matched);
+        var matchedOnRetryCount = resultsSnapshot.Count(r => !r.Matched && r.RetryMatched == true);
+        var confirmedMismatchCount = resultsSnapshot.Count(r => !r.Matched && (r.RetryMatched == false || r.RetryMatched == null));
+        var totalMatched = matchedCount + matchedOnRetryCount; // Include transient mismatches as "matched"
+        
         <div class="card">
             <h2>Summary</h2>
             <div class="summary-grid">
                 <div class="summary-card">
                     <h3>Total Comparisons</h3>
-                    <p class="value">@StateService.Results.Count</p>
+                    <p class="value">@resultsSnapshot.Count</p>
                 </div>
                 <div class="summary-card success">
                     <h3>Matched</h3>
-                    <p class="value" style="color: var(--success-color);">@StateService.Results.Count(r => r.Matched)</p>
+                    <p class="value" style="color: var(--success-color);">@totalMatched</p>
+                    @if (matchedOnRetryCount > 0)
+                    {
+                        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">(@matchedOnRetryCount transient)</p>
+                    }
                 </div>
                 <div class="summary-card danger">
-                    <h3>Mismatched</h3>
-                    <p class="value" style="color: var(--danger-color);">@StateService.Results.Count(r => !r.Matched)</p>
+                    <h3>Confirmed Mismatches</h3>
+                    <p class="value" style="color: var(--danger-color);">@confirmedMismatchCount</p>
                 </div>
                 <div class="summary-card">
                     <h3>Success Rate</h3>
-                    <p class="value">@GetSuccessRate()%</p>
+                    <p class="value">@GetSuccessRate(totalMatched, resultsSnapshot.Count)%</p>
                 </div>
             </div>
         </div>
 
         <div class="card">
-            <h2>Results by Site Code</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0;">Results</h2>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <label style="font-weight: 500; color: #666;">Group by:</label>
+                    <button class="btn @(groupByService ? "btn-primary" : "btn-secondary")" 
+                            style="font-size: 0.9rem; padding: 8px 16px;" 
+                            @onclick="@(() => groupByService = true)">
+                        🔍 Search Service
+                    </button>
+                    <button class="btn @(!groupByService ? "btn-primary" : "btn-secondary")" 
+                            style="font-size: 0.9rem; padding: 8px 16px;" 
+                            @onclick="@(() => groupByService = false)">
+                        📍 Site Code
+                    </button>
+                </div>
+            </div>
+            
             <div class="filter-bar">
                 <input type="text" class="search-input" placeholder="Filter by SiteCode or SearcherUserId..." @bind="filterText" @bind:event="oninput" />
                 <select @bind="filterStatus" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: 4px;">
+                    <option value="mismatched">Mismatched Only</option>
                     <option value="all">All Results</option>
                     <option value="matched">Matched Only</option>
-                    <option value="mismatched">Mismatched Only</option>
                 </select>
             </div>
 
-            @foreach (var siteGroup in GetFilteredGroupedResults())
+            @if (groupByService)
             {
-                var total = siteGroup.Count();
-                var matched = siteGroup.Count(r => r.Matched);
-                var mismatched = total - matched;
+                @foreach (var serviceGroup in GetFilteredGroupedByService())
+                {
+                    var total = serviceGroup.Count();
+                    var matched = serviceGroup.Count(r => r.Matched);
+                    var mismatched = total - matched;
 
-                <div style="margin-bottom: 30px;">
-                    <h3 style="color: var(--primary-color); margin-bottom: 15px;">
-                        SiteCode: @siteGroup.Key - 
-                        <span style="color: var(--success-color);">@matched matched</span> / 
-                        <span style="color: var(--danger-color);">@mismatched mismatched</span>
-                    </h3>
-                    
-                    <table class="results-table">
-                        <thead>
-                            <tr>
-                                <th>Status</th>
-                                <th>Searcher User ID</th>
-                                <th>Control Count</th>
-                                <th>Test Count</th>
-                                <th>Call ID</th>
-                                <th>Details</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var result in siteGroup.OrderBy(r => r.Matched).ThenBy(r => r.SearcherUserId))
-                            {
+                    <div style="margin-bottom: 30px;">
+                        <h3 style="color: var(--primary-color); margin-bottom: 15px;">
+                            🔍 @serviceGroup.Key - 
+                            <span style="color: var(--success-color);">@matched matched</span> / 
+                            <span style="color: var(--danger-color);">@mismatched mismatched</span>
+                        </h3>
+                        
+                        @foreach (var siteGroup in serviceGroup.GroupBy(r => r.SiteCode).OrderBy(g => g.Key))
+                        {
+                            var siteTotal = siteGroup.Count();
+                            var siteMatched = siteGroup.Count(r => r.Matched);
+                            var siteMismatched = siteTotal - siteMatched;
+
+                            <div style="margin-left: 20px; margin-bottom: 20px;">
+                                <h4 style="color: #666; margin-bottom: 10px; font-size: 1rem;">
+                                    📍 SiteCode: @siteGroup.Key - 
+                                    <span style="color: var(--success-color);">@siteMatched matched</span> / 
+                                    <span style="color: var(--danger-color);">@siteMismatched mismatched</span>
+                                </h4>
+                                
+                                <table class="results-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Status</th>
+                                            <th>Searcher User ID</th>
+                                            <th>Control Count</th>
+                                            <th>Test Count</th>
+                                            <th>Call ID</th>
+                                            <th>Details</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var result in siteGroup.OrderBy(r => r.Matched).ThenBy(r => r.SearcherUserId))
+                                        {
+                                            <tr>
+                                                <td>
+                                                    @if (result.Matched)
+                                                    {
+                                                        <span class="badge badge-success">✓ Match</span>
+                                                    }
+                                                    else if (result.WasRetried && result.RetryMatched == true)
+                                                    {
+                                                        <span class="badge badge-warning" title="Mismatch on first run, but matched on retry - likely transient">⚠️ Matched on Retry</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="badge badge-danger">✗ Diff</span>
+                                                        @if (result.WasRetried && result.RetryMatched == false)
+                                                        {
+                                                            <span class="badge badge-danger" style="margin-left: 5px;" title="Mismatch confirmed on retry">🔁 Confirmed</span>
+                                                        }
+                                                    }
+                                                </td>
+                                                <td><strong>@result.SearcherUserId</strong></td>
+                                                <td>
+                                                    @result.ControlCount
+                                                    @if (result.WasRetried && result.RetryControlCount.HasValue)
+                                                    {
+                                                        <span style="color: #666; font-size: 0.85rem;"> → @result.RetryControlCount</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    @result.TestCount
+                                                    @if (result.WasRetried && result.RetryTestCount.HasValue)
+                                                    {
+                                                        <span style="color: #666; font-size: 0.85rem;"> → @result.RetryTestCount</span>
+                                                    }
+                                                </td>
+                                                <td style="font-family: monospace; font-size: 0.85rem;">@result.CallId.ToString().Substring(0, 8)...</td>
+                                                <td>
+                                                    @if (!result.Matched)
+                                                    {
+                                                        <div class="diff-details">
+                                                            @if (result.OnlyInControl.Any())
+                                                            {
+                                                                <div class="diff-section">
+                                                                    <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count):</strong>
+                                                                    <span>@string.Join(", ", result.OnlyInControl.Take(10))@(result.OnlyInControl.Count > 10 ? "..." : "")</span>
+                                                                </div>
+                                                            }
+                                                            @if (result.OnlyInTest.Any())
+                                                            {
+                                                                <div class="diff-section">
+                                                                    <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count):</strong>
+                                                                    <span>@string.Join(", ", result.OnlyInTest.Take(10))@(result.OnlyInTest.Count > 10 ? "..." : "")</span>
+                                                                </div>
+                                                            }
+                                                            @if (result.InBoth.Any())
+                                                            {
+                                                                <div class="diff-section">
+                                                                    <strong style="color: var(--success-color);">In Both (@result.InBoth.Count):</strong>
+                                                                    <span>@string.Join(", ", result.InBoth.Take(10))@(result.InBoth.Count > 10 ? "..." : "")</span>
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span style="color: #999;">No differences</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                @foreach (var siteGroup in GetFilteredGroupedBySiteCode())
+                {
+                    var total = siteGroup.Count();
+                    var matched = siteGroup.Count(r => r.Matched);
+                    var mismatched = total - matched;
+
+                    <div style="margin-bottom: 30px;">
+                        <h3 style="color: var(--primary-color); margin-bottom: 15px;">
+                            📍 SiteCode: @siteGroup.Key - 
+                            <span style="color: var(--success-color);">@matched matched</span> / 
+                            <span style="color: var(--danger-color);">@mismatched mismatched</span>
+                        </h3>
+                        
+                        <table class="results-table">
+                            <thead>
                                 <tr>
-                                    <td>
-                                        @if (result.Matched)
-                                        {
-                                            <span class="badge badge-success">✓ Match</span>
-                                        }
-                                        else
-                                        {
-                                            <span class="badge badge-danger">✗ Diff</span>
-                                        }
-                                    </td>
-                                    <td><strong>@result.SearcherUserId</strong></td>
-                                    <td>@result.ControlCount</td>
-                                    <td>@result.TestCount</td>
-                                    <td style="font-family: monospace; font-size: 0.85rem;">@result.CallId.ToString().Substring(0, 8)...</td>
-                                    <td>
-                                        @if (!result.Matched)
-                                        {
-                                            <div class="diff-details">
-                                                @if (result.OnlyInControl.Any())
-                                                {
-                                                    <div class="diff-section">
-                                                        <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count):</strong>
-                                                        <span>@string.Join(", ", result.OnlyInControl.Take(10))@(result.OnlyInControl.Count > 10 ? "..." : "")</span>
-                                                    </div>
-                                                }
-                                                @if (result.OnlyInTest.Any())
-                                                {
-                                                    <div class="diff-section">
-                                                        <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count):</strong>
-                                                        <span>@string.Join(", ", result.OnlyInTest.Take(10))@(result.OnlyInTest.Count > 10 ? "..." : "")</span>
-                                                    </div>
-                                                }
-                                                @if (result.InBoth.Any())
-                                                {
-                                                    <div class="diff-section">
-                                                        <strong style="color: var(--success-color);">In Both (@result.InBoth.Count):</strong>
-                                                        <span>@string.Join(", ", result.InBoth.Take(10))@(result.InBoth.Count > 10 ? "..." : "")</span>
-                                                    </div>
-                                                }
-                                            </div>
-                                        }
-                                        else
-                                        {
-                                            <span style="color: #999;">No differences</span>
-                                        }
-                                    </td>
+                                    <th>Status</th>
+                                    <th>Search Service</th>
+                                    <th>Searcher User ID</th>
+                                    <th>Control Count</th>
+                                    <th>Test Count</th>
+                                    <th>Call ID</th>
+                                    <th>Details</th>
                                 </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
+                            </thead>
+                            <tbody>
+                                @foreach (var result in siteGroup.OrderBy(r => r.Matched).ThenBy(r => r.SearcherUserId))
+                                {
+                                    <tr>
+                                        <td>
+                                            @if (result.Matched)
+                                            {
+                                                <span class="badge badge-success">✓ Match</span>
+                                            }
+                                            else if (result.WasRetried && result.RetryMatched == true)
+                                            {
+                                                <span class="badge badge-warning" title="Mismatch on first run, but matched on retry - likely transient">⚠️ Matched on Retry</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge badge-danger">✗ Diff</span>
+                                                @if (result.WasRetried && result.RetryMatched == false)
+                                                {
+                                                    <span class="badge badge-danger" style="margin-left: 5px;" title="Mismatch confirmed on retry">🔁 Confirmed</span>
+                                                }
+                                            }
+                                        </td>
+                                        <td><span class="service-badge">@result.SearchServiceName</span></td>
+                                        <td><strong>@result.SearcherUserId</strong></td>
+                                        <td>
+                                            @result.ControlCount
+                                            @if (result.WasRetried && result.RetryControlCount.HasValue)
+                                            {
+                                                <span style="color: #666; font-size: 0.85rem;"> → @result.RetryControlCount</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @result.TestCount
+                                            @if (result.WasRetried && result.RetryTestCount.HasValue)
+                                            {
+                                                <span style="color: #666; font-size: 0.85rem;"> → @result.RetryTestCount</span>
+                                            }
+                                        </td>
+                                        <td style="font-family: monospace; font-size: 0.85rem;">@result.CallId.ToString().Substring(0, 8)...</td>
+                                        <td>
+                                            @if (!result.Matched)
+                                            {
+                                                <div class="diff-details">
+                                                    @if (result.OnlyInControl.Any())
+                                                    {
+                                                        <div class="diff-section">
+                                                            <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count):</strong>
+                                                            <span>@string.Join(", ", result.OnlyInControl.Take(10))@(result.OnlyInControl.Count > 10 ? "..." : "")</span>
+                                                        </div>
+                                                    }
+                                                    @if (result.OnlyInTest.Any())
+                                                    {
+                                                        <div class="diff-section">
+                                                            <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count):</strong>
+                                                            <span>@string.Join(", ", result.OnlyInTest.Take(10))@(result.OnlyInTest.Count > 10 ? "..." : "")</span>
+                                                        </div>
+                                                    }
+                                                    @if (result.InBoth.Any())
+                                                    {
+                                                        <div class="diff-section">
+                                                            <strong style="color: var(--success-color);">In Both (@result.InBoth.Count):</strong>
+                                                            <span>@string.Join(", ", result.InBoth.Take(10))@(result.InBoth.Count > 10 ? "..." : "")</span>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <span style="color: #999;">No differences</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
             }
         </div>
     }
@@ -202,7 +442,26 @@
 @code {
     private string? errorMessage;
     private string filterText = "";
-    private string filterStatus = "all";
+    private string filterStatus = "mismatched"; // Default to showing mismatches only
+    private bool groupByService = true; // Default to grouping by service
+    private bool isInitializing = false;
+    private bool isRefreshingParameters = false;
+    private string initializationMessage = "";
+    private List<string> allSearchServices = new List<string>
+    {
+        "Stack",
+        "SearchV4.OnePush",
+        "SearchV4.TwoWay",
+        "SearchV4.Reverse",
+        "SearchV4.MoreLikeThis",
+        "SearchV4.OneWay",
+        "SearchV4.SearchWow",
+        "SearchHighlight.LitBatch",
+        "SearchHighlight.LitSearch",
+        "SearchV4.Recommended.ExpertPicks",
+        "SearchV4.Recommended.JustForYou",
+        "SearchV4.Recommended.MatchPicks"
+    };
 
     protected override void OnInitialized()
     {
@@ -215,25 +474,135 @@
         InvokeAsync(StateHasChanged);
     }
 
+    private List<string> GetAllSearchServices()
+    {
+        return allSearchServices;
+    }
+
+    private void ToggleService(string serviceName, bool isEnabled)
+    {
+        if (isEnabled)
+        {
+            Config.EnabledSearchServices.Add(serviceName);
+        }
+        else
+        {
+            Config.EnabledSearchServices.Remove(serviceName);
+        }
+        StateHasChanged();
+    }
+
+    private void EnableAllServices()
+    {
+        foreach (var service in allSearchServices)
+        {
+            Config.EnabledSearchServices.Add(service);
+        }
+        StateHasChanged();
+    }
+
+    private void DisableAllServices()
+    {
+        Config.EnabledSearchServices.Clear();
+        StateHasChanged();
+    }
+
+    private async Task RefreshSearchParameters()
+    {
+        try
+        {
+            isRefreshingParameters = true;
+            errorMessage = null;
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(50);
+
+            // Validate and get ShardId
+            var shardId = await Task.Run(() => 
+                ShardValidationService.ValidateAndGetShardId(Config.MrSixControl, Config.MrSixTest));
+            
+            // Get search parameters from database
+            var searchParameters = await Task.Run(() => 
+                SearchParameterService.GetSearchParameters(shardId));
+            
+            StateService.SetCachedSearchParameters(searchParameters, shardId);
+            
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error refreshing parameters: {ex.Message}";
+            StateService.SetCachedSearchParameters(null, 0);
+        }
+        finally
+        {
+            isRefreshingParameters = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
     private async Task StartComparison()
     {
         try
         {
             errorMessage = null;
             StateService.ClearResults();
+            
+            // Set initializing state and force UI update
+            isInitializing = true;
+            initializationMessage = "Starting comparison...";
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(50); // Allow UI to update
+            
             StateService.SetRunning(true);
             StateService.SetProgress(0, 0, "Initializing...");
 
-            // Validate and get ShardId
-            var shardId = ShardValidationService.ValidateAndGetShardId(Config.MrSixControl, Config.MrSixTest);
-            StateService.SetProgress(0, 0, $"Retrieved ShardId: {shardId}");
-
-            // Get search parameters
-            var searchParameters = SearchParameterService.GetSearchParameters(shardId);
-            StateService.SetProgress(0, searchParameters.Count, $"Loaded {searchParameters.Count} search parameters");
+            // Check if we need to load search parameters
+            if (StateService.CachedSearchParameters == null || !StateService.CachedSearchParameters.Any())
+            {
+                // Validate and get ShardId - run in background to not block UI
+                initializationMessage = "Validating shard configuration...";
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(50);
+                
+                var shardId = await Task.Run(() => 
+                    ShardValidationService.ValidateAndGetShardId(Config.MrSixControl, Config.MrSixTest));
+                
+                // Get search parameters - this is the slow operation
+                initializationMessage = $"Loading search parameters from database (ShardId: {shardId})...";
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(50);
+                
+                var searchParameters = await Task.Run(() => 
+                    SearchParameterService.GetSearchParameters(shardId));
+                
+                StateService.SetCachedSearchParameters(searchParameters, shardId);
+            }
+            else
+            {
+                initializationMessage = $"Using cached search parameters ({StateService.CachedSearchParameters.Count} loaded, ShardId: {StateService.CachedShardId})...";
+                await InvokeAsync(StateHasChanged);
+                await Task.Delay(50);
+            }
+            
+            // Clear initializing state
+            isInitializing = false;
+            StateService.SetProgress(0, StateService.CachedSearchParameters.Count, $"Loaded {StateService.CachedSearchParameters.Count} search parameters");
 
             // Execute comparisons
-            var comparisonService = new ComparisonService(Config, StackSearchService);
+            var comparisonService = new ComparisonService(
+                Config, 
+                StackSearchService,
+                OnePushService,
+                LitBatchService,
+                LitSearchService,
+                MoreLikeThisService,
+                OneWayService,
+                ExpertPicksService,
+                JustForYouService,
+                MatchPicksService,
+                ReverseService,
+                SearchWowService,
+                TwoWayService);
             
             // Wire up events
             comparisonService.ProgressUpdated += (sender, args) =>
@@ -246,17 +615,19 @@
                 StateService.AddResult(args.Result);
             };
 
-            await comparisonService.CompareSearchResults(searchParameters);
+            await comparisonService.CompareSearchResults(StateService.CachedSearchParameters);
             
-            StateService.SetProgress(searchParameters.Count, searchParameters.Count, "Comparison complete!");
+            StateService.SetProgress(StateService.CachedSearchParameters.Count, StateService.CachedSearchParameters.Count, "Comparison complete!");
         }
         catch (Exception ex)
         {
             errorMessage = $"Error during comparison: {ex.Message}";
+            isInitializing = false;
         }
         finally
         {
             StateService.SetRunning(false);
+            isInitializing = false;
             await LoggingService.CloseAndFlush();
         }
     }
@@ -273,16 +644,39 @@
         return (double)StateService.Current / StateService.Total * 100;
     }
 
-    private string GetSuccessRate()
+    private string GetSuccessRate(int matchedCount, int totalCount)
     {
-        if (StateService.Results.Count == 0) return "0.0";
-        var rate = (double)StateService.Results.Count(r => r.Matched) / StateService.Results.Count * 100;
+        if (totalCount == 0) return "0.0";
+        var rate = (double)matchedCount / totalCount * 100;
         return rate.ToString("F1");
     }
 
-    private IEnumerable<IGrouping<short, ComparisonResult>> GetFilteredGroupedResults()
+    private IEnumerable<IGrouping<string, ComparisonResult>> GetFilteredGroupedByService()
     {
-        var filtered = StateService.Results.AsEnumerable();
+        var results = StateService.Results.ToList(); // Create a snapshot
+        var filtered = results.AsEnumerable();
+
+        // Apply status filter
+        if (filterStatus == "matched")
+            filtered = filtered.Where(r => r.Matched);
+        else if (filterStatus == "mismatched")
+            filtered = filtered.Where(r => !r.Matched);
+
+        // Apply text filter
+        if (!string.IsNullOrWhiteSpace(filterText))
+        {
+            filtered = filtered.Where(r => 
+                r.SiteCode.ToString().Contains(filterText, StringComparison.OrdinalIgnoreCase) ||
+                r.SearcherUserId.ToString().Contains(filterText, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return filtered.GroupBy(r => r.SearchServiceName).OrderBy(g => g.Key);
+    }
+
+    private IEnumerable<IGrouping<short, ComparisonResult>> GetFilteredGroupedBySiteCode()
+    {
+        var results = StateService.Results.ToList(); // Create a snapshot
+        var filtered = results.AsEnumerable();
 
         // Apply status filter
         if (filterStatus == "matched")

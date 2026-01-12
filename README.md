@@ -29,14 +29,20 @@ Traditional console application with Spectre.Console for beautiful CLI output:
 
 ### 3. **MrSixResultsComparator.BlazorApp** (WPF + Blazor Hybrid Desktop App)
 Modern desktop application with web-based UI:
-- **Real-time progress tracking** with visual progress bar
+- **Real-time progress tracking** with visual progress bar and loading indicators
 - **Persistent results** that remain visible between runs
-- **Advanced filtering** by SiteCode, SearcherUserId, or match status
+- **Advanced filtering** by SiteCode, SearcherUserId, or match status (defaults to mismatches)
+- **Two grouping modes**: Group by Search Service or by Site Code
 - **Interactive result tables** showing detailed differences
-- **Modern, responsive UI** with professional styling
+- **Automatic retry system**: Verifies all mismatches are repeatable
+- **Smart retry tracking**: Distinguishes transient vs confirmed mismatches
+- **Parameter caching**: Loads parameters once, reuses for faster subsequent runs
+- **Parameters viewer**: Dedicated page to view and filter cached parameters
+- **Service enable/disable**: Selectively test specific search services via UI
+- **Modern, responsive UI** with professional styling and desktop-optimized layout
 - **Configuration panel** to modify settings without editing config files
 
-**Best for**: Regular usage, detailed analysis, result comparison history
+**Best for**: Regular usage, detailed analysis, result comparison history, verifying real issues
 
 ## 🚀 Getting Started
 
@@ -75,9 +81,37 @@ public string MrSixControl { get; set; } = "DA1MASC805";  // Control server
 public string MrSixTest { get; set; } = "DA1MASC804";     // Test server
 public int MaxParallelism { get; set; } = 5;              // Parallel execution limit
 public string SearchDataConnectionString { get; set; } = "...";
+public HashSet<string> EnabledSearchServices { get; set; } = new HashSet<string>
+{
+    "Stack", "SearchV4.OnePush", "SearchV4.TwoWay", // ... all 12 services
+};
 ```
 
 In the **Blazor Desktop App**, you can modify these settings directly in the UI configuration panel.
+
+### 🔧 Enabling/Disabling Search Services
+
+You can selectively enable or disable any of the 12 search services:
+
+**In Blazor App UI:**
+- Use the interactive **Search Services** panel with checkboxes
+- Enable All / Disable All buttons for quick configuration
+- Visual indicators show enabled (green) vs disabled (gray) services
+
+**In Console App:**
+```csharp
+var config = new AppConfiguration();
+
+// Disable specific services
+config.EnabledSearchServices.Remove("SearchHighlight.LitBatch");
+
+// Or enable only specific services
+config.EnabledSearchServices.Clear();
+config.EnabledSearchServices.Add("Stack");
+config.EnabledSearchServices.Add("SearchV4.OnePush");
+```
+
+See [SEARCH_SERVICES_CONFIGURATION.md](SEARCH_SERVICES_CONFIGURATION.md) for detailed documentation.
 
 ## 📊 Features
 
@@ -88,25 +122,38 @@ In the **Blazor Desktop App**, you can modify these settings directly in the UI 
 - ✅ Detailed summary tables by SiteCode
 - ✅ Comprehensive JSON log files
 - ✅ Suitable for automation and scripting
+- ✅ All 12 search services supported
+
+### Blazor Desktop App Features  
+(See full list above - includes automatic retry, caching, parameter viewer, and more)
 
 ### Blazor Desktop App Features
 - ✅ Modern web-based UI in desktop application
-- ✅ Real-time progress bar with status messages
+- ✅ Real-time progress bar with loading spinners and status messages
 - ✅ Persistent results visible after completion
-- ✅ Filter by SiteCode, SearcherUserId, or match status
-- ✅ Detailed inline difference display
-- ✅ Summary cards showing key metrics
+- ✅ **Automatic retry of mismatches** to verify repeatability
+- ✅ **Smart mismatch classification** (transient vs confirmed)
+- ✅ **Parameter caching** for instant subsequent runs
+- ✅ **Parameters viewer page** to inspect cached data
+- ✅ Filter by SiteCode, SearcherUserId, or match status (**defaults to mismatches**)
+- ✅ **Two grouping modes**: by Search Service or by Site Code
+- ✅ Detailed inline difference display with retry counts
+- ✅ Summary cards showing key metrics (confirmed mismatches)
 - ✅ Edit configuration without code changes
+- ✅ **Enable/disable individual search services** via UI
+- ✅ **Desktop-optimized layout** (1800px wide, side-by-side cards)
 - ✅ Professional styling with gradients and shadows
 - ✅ Responsive layout that adapts to window size
 
 ## 🔍 How It Works
 
 1. **Validation**: Validates that Control and Test servers are on the same Shard
-2. **Data Loading**: Retrieves search parameters from SearchData database
+2. **Data Loading**: Retrieves search parameters from SearchData database (cached for reuse!)
 3. **Parallel Execution**: Runs comparisons in parallel (configurable)
 4. **Result Comparison**: Compares UserIds returned by each environment
-5. **Reporting**: Displays/stores results with detailed differences
+5. **Auto-Retry**: Automatically re-runs all mismatches to verify repeatability
+6. **Classification**: Marks mismatches as "transient" (matched on retry) or "confirmed" (repeatable)
+7. **Reporting**: Displays/stores results with detailed differences and retry information
 
 ## 📈 Output Examples
 
@@ -130,12 +177,15 @@ UserIds in both (23):
 ```
 
 ### Blazor Desktop UI
-- **Header**: Gradient header with app title
-- **Configuration Panel**: Editable settings for servers and parallelism
-- **Progress Section**: Real-time progress bar showing current/total
-- **Summary Cards**: Total comparisons, matched, mismatched, success rate
-- **Results Tables**: Grouped by SiteCode with expandable difference details
-- **Filter Bar**: Search and filter results dynamically
+- **Header**: Gradient header with app title and back navigation
+- **Configuration Panel** (Left): Editable settings for servers and parallelism
+- **Search Services Panel** (Right): Enable/disable services with checkboxes
+- **Cache Status**: Shows cached parameter count with "View" link
+- **Progress Section**: Real-time progress bar or loading spinner with detailed messages
+- **Summary Cards**: Total, Matched (with transient count), Confirmed Mismatches, Success Rate
+- **Results Tables**: Grouped by Service or SiteCode with expandable difference details
+- **Filter Bar**: Search and filter results dynamically (defaults to mismatches)
+- **Parameters Page** (`/parameters`): View and filter all cached search parameters
 
 ## 📝 Logging
 
@@ -169,10 +219,16 @@ dotnet test
 **Use Blazor Desktop App When:**
 - Regular daily usage
 - Need to review results over time
+- Want automatic retry verification of mismatches
+- Need to distinguish transient vs real issues
 - Want to adjust configuration frequently
+- Want parameter caching for faster iterations
+- Need to view and filter cached parameters
+- Need to selectively enable/disable search services
 - Prefer graphical interface
 - Need to filter and analyze results interactively
 - Presenting results to stakeholders
+- Want to see results grouped by service or site
 
 ## 🤝 Contributing
 
