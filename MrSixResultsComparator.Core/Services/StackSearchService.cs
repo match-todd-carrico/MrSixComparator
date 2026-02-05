@@ -20,15 +20,17 @@ public class StackSearchService : ISearchService
     public Task<SearchResponse<SearchResultRow>> ExecuteSearch(
         SearchParameter searcher, 
         string pinnedToServerName, 
-        string? config = null)
+        string? config = null,
+        bool enableExplain = false)
     {
-        return ExecuteStackSearch(searcher, pinnedToServerName, config);
+        return ExecuteStackSearch(searcher, pinnedToServerName, config, enableExplain);
     }
 
     public Task<SearchResponse<SearchResultRow>> ExecuteStackSearch(
         SearchParameter searcher, 
         string pinnedToServerName, 
-        string? config = null)
+        string? config = null,
+        bool enableExplain = false)
     {
         SearchResponse<SearchResultRow>? response = null;
 
@@ -49,6 +51,14 @@ public class StackSearchService : ISearchService
 
         args.ExtensionParams = new List<string>(_config.ExtensionParams);
         args.ExtensionParams.Add("doNotRandom");
+        args.ExtensionParams.Add("SingleThread");
+        
+        // Add explain parameter if requested (only for retry/verification runs)
+        if (enableExplain)
+        {
+            args.ExtensionParams.Add("explain");
+            Log.Debug("Explain tracking enabled for StackSearch on {ServerName}", pinnedToServerName);
+        }
 
         args.DynamicArgs ??= new Dictionary<string, string>();
         args.DynamicArgs["OCallId"] = searcher.CallId.ToString();
@@ -79,5 +89,25 @@ public class StackSearchService : ISearchService
             return new List<int>();
         
         return response.Results.Select(r => r.UserId).ToList();
+    }
+
+    public Dictionary<string, List<int>> ExtractUserIdsBySlotType(SearchResponse<SearchResultRow> response)
+    {
+        var result = new Dictionary<string, List<int>>();
+        
+        if (response?.Results == null)
+            return result;
+        
+        foreach (var row in response.Results)
+        {
+            var slotType = row.ResultSlotType.ToString();
+            
+            if (!result.ContainsKey(slotType))
+                result[slotType] = new List<int>();
+            
+            result[slotType].Add(row.UserId);
+        }
+        
+        return result;
     }
 }

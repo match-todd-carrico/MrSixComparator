@@ -2,6 +2,30 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "build-blazor",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/MrSixResultsComparator.BlazorApp/MrSixResultsComparator.BlazorApp.csproj",
+                "/property:GenerateFullPaths=true",
+                "/consoleloggerparameters:NoSummary;ForceNoAlign"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "run-blazor",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "run",
+                "--project",
+                "${workspaceFolder}/MrSixResultsComparator.BlazorApp/MrSixResultsComparator.BlazorApp.csproj"
+            ],
+            "problemMatcher": "$msCompile",
+            "isBackground": false
+        },
+        {
             "label": "build",
             "command": "dotnet",
             "type": "process",

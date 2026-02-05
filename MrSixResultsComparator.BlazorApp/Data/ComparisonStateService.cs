@@ -48,7 +48,22 @@ public class ComparisonStateService
     {
         lock (_lock)
         {
-            _results.Add(result);
+            // Check if this result already exists (based on unique identifiers)
+            var existingIndex = _results.FindIndex(r => 
+                r.SiteCode == result.SiteCode && 
+                r.SearcherUserId == result.SearcherUserId && 
+                r.SearchServiceName == result.SearchServiceName);
+            
+            if (existingIndex >= 0)
+            {
+                // Update existing result (for retry scenarios)
+                _results[existingIndex] = result;
+            }
+            else
+            {
+                // Add new result
+                _results.Add(result);
+            }
         }
         NotifyStateChanged();
     }

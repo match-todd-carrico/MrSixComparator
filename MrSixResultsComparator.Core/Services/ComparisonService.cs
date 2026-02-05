@@ -204,30 +204,35 @@ public class ComparisonService
             return;
         }
         
-        // Execute Search on both environments again
-        var resultA = await searchService.ExecuteSearch(searchParam, _config.MrSixControl);
-        var resultB = await searchService.ExecuteSearch(searchParam, _config.MrSixTest);
+        Log.Debug("Generated Retry CallIds - Control: {ControlCallId}, Test: {TestCallId}", originalResult.ControlCallId, originalResult.CallId);
+        
+        // Execute Search on both environments again WITH EXPLAIN ENABLED
+        var resultControl = await searchService.ExecuteSearch(searchParam, _config.MrSixControl, enableExplain: true);
+        var resultTest = await searchService.ExecuteSearch(searchParam, _config.MrSixTest, enableExplain: true);
 
         // Extract UserIds from results
-        var userIdsA = searchService.ExtractUserIds(resultA);
-        var userIdsB = searchService.ExtractUserIds(resultB);
+        var userIdsControl = searchService.ExtractUserIds(resultControl);
+        var userIdsTest = searchService.ExtractUserIds(resultTest);
 
         // Update the original result with retry information
         originalResult.WasRetried = true;
-        originalResult.RetryControlCount = userIdsA.Count;
-        originalResult.RetryTestCount = userIdsB.Count;
-        originalResult.RetryMatched = userIdsA.Count == userIdsB.Count && 
-                                       !userIdsA.Except(userIdsB).Any() && 
-                                       !userIdsB.Except(userIdsA).Any();
+        originalResult.RetryControlCount = userIdsControl.Count;
+        originalResult.RetryTestCount = userIdsTest.Count;
+        originalResult.RetryMatched = userIdsControl.Count == userIdsTest.Count && 
+                                       !userIdsControl.Except(userIdsTest).Any() && 
+                                       !userIdsTest.Except(userIdsControl).Any();
 
-        if (originalResult.RetryMatched == true)
+        // If retry still mismatched, update the CallIds to the retry ones for debugging
+        if (originalResult.RetryMatched == false)
         {
-            Log.Warning("Retry matched for SearcherUserId: {SearcherUserId} - original mismatch may have been transient", 
-                searchParam.SearcherUserId);
+            originalResult.ControlCallId = resultControl.CallId;
+            originalResult.TestCallId = resultTest.CallId;
+            Log.Information("Retry confirmed mismatch for SearcherUserId: {SearcherUserId} - Updated CallIds with EXPLAIN enabled: Control={ControlCallId}, Test={TestCallId}", 
+                searchParam.SearcherUserId, resultControl.CallId, resultTest.CallId);
         }
         else
         {
-            Log.Information("Retry confirmed mismatch for SearcherUserId: {SearcherUserId}", 
+            Log.Warning("Retry matched for SearcherUserId: {SearcherUserId} - original mismatch may have been transient", 
                 searchParam.SearcherUserId);
         }
         
@@ -248,14 +253,18 @@ public class ComparisonService
         }
         
         // 1. Execute Search on both environments
-        var resultA = await searchService.ExecuteSearch(searchParam, _config.MrSixControl);
-        var resultB = await searchService.ExecuteSearch(searchParam, _config.MrSixTest);
+        var controlResult = await searchService.ExecuteSearch(searchParam, _config.MrSixControl);
+        var testResult = await searchService.ExecuteSearch(searchParam, _config.MrSixTest);
 
         // 2. Extract UserIds from results
-        var userIdsA = searchService.ExtractUserIds(resultA);
-        var userIdsB = searchService.ExtractUserIds(resultB);
+        var userIdsA = searchService.ExtractUserIds(controlResult);
+        var userIdsB = searchService.ExtractUserIds(testResult);
 
-        // 3. Compare UserIds
+        // 3. Extract UserIds by SlotType
+        var userIdsBySlotTypeA = searchService.ExtractUserIdsBySlotType(controlResult);
+        var userIdsBySlotTypeB = searchService.ExtractUserIdsBySlotType(testResult);
+
+        // 4. Compare UserIds
         var onlyInA = userIdsA.Except(userIdsB).ToList();
         var onlyInB = userIdsB.Except(userIdsA).ToList();
         var inBoth = userIdsA.Intersect(userIdsB).ToList();
@@ -264,11 +273,12 @@ public class ComparisonService
 
         if (hasDifferences)
         {
-            RecordDifference(searchParam, userIdsA, userIdsB, onlyInA, onlyInB, inBoth);
+            RecordDifference(searchParam, userIdsA, userIdsB, onlyInA, onlyInB, inBoth, 
+                controlResult.CallId, testResult.CallId, userIdsBySlotTypeA, userIdsBySlotTypeB);
         }
         else
         {
-            RecordMatch(searchParam, userIdsA.Count);
+            RecordMatch(searchParam, userIdsA.Count, controlResult.CallId, testResult.CallId, userIdsBySlotTypeA);
         }
     }
 
@@ -278,8 +288,17 @@ public class ComparisonService
         List<int> userIdsB,
         List<int> onlyInA,
         List<int> onlyInB,
-        List<int> inBoth)
+        List<int> inBoth,
+        Guid controlCallId,
+        Guid testCallId,
+        Dictionary<string, List<int>> slotTypeA,
+        Dictionary<string, List<int>> slotTypeB)
     {
+        // Calculate slot type breakdown
+        var onlyInControlBySlotType = CalculateSlotTypeBreakdown(onlyInA, slotTypeA);
+        var onlyInTestBySlotType = CalculateSlotTypeBreakdown(onlyInB, slotTypeB);
+        var inBothBySlotType = CalculateSlotTypeBreakdown(inBoth, slotTypeA); // Use slotTypeA for inBoth since they exist in both
+        
         // Track this difference
         var result = new ComparisonResult
         {
@@ -291,9 +310,14 @@ public class ComparisonService
             OnlyInControl = onlyInA,
             OnlyInTest = onlyInB,
             InBoth = inBoth,
-            CallId = searchParam.CallId,
+            CallId = searchParam.CallId, // Original CallId from database
+            ControlCallId = controlCallId, // Actual CallId used for Control search
+            TestCallId = testCallId, // Actual CallId used for Test search
             CallTime = searchParam.CallTime,
-            SearchServiceName = searchParam.ClassName
+            SearchServiceName = searchParam.ClassName,
+            OnlyInControlBySlotType = onlyInControlBySlotType,
+            OnlyInTestBySlotType = onlyInTestBySlotType,
+            InBothBySlotType = inBothBySlotType
         };
         
         _comparisonResults.Add(result);
@@ -301,14 +325,36 @@ public class ComparisonService
         OnComparisonCompleted(new ComparisonResultEventArgs { Result = result });
         
         // Log the difference
-        Log.Warning("Difference found for SearcherUserId: {SearcherUserId}, SiteCode: {SiteCode}, CallId: {CallId}",
-            searchParam.SearcherUserId, searchParam.SiteCode, searchParam.CallId);
+        Log.Warning("Difference found for SearcherUserId: {SearcherUserId}, SiteCode: {SiteCode}, ControlCallId: {ControlCallId}, TestCallId: {TestCallId}",
+            searchParam.SearcherUserId, searchParam.SiteCode, controlCallId, testCallId);
         Log.Warning("Control count: {ControlCount}, Test count: {TestCount}", userIdsA.Count, userIdsB.Count);
         Log.Warning("Only in Control: {OnlyInControl}", string.Join(",", onlyInA));
         Log.Warning("Only in Test: {OnlyInTest}", string.Join(",", onlyInB));
     }
 
-    private void RecordMatch(SearchParameter searchParam, int resultCount)
+    private Dictionary<string, List<int>> CalculateSlotTypeBreakdown(List<int> userIds, Dictionary<string, List<int>> slotTypeMapping)
+    {
+        var result = new Dictionary<string, List<int>>();
+        
+        foreach (var userId in userIds)
+        {
+            foreach (var kvp in slotTypeMapping)
+            {
+                if (kvp.Value.Contains(userId))
+                {
+                    if (!result.ContainsKey(kvp.Key))
+                        result[kvp.Key] = new List<int>();
+                    
+                    result[kvp.Key].Add(userId);
+                    break; // Each userId should only belong to one slot type
+                }
+            }
+        }
+        
+        return result;
+    }
+
+    private void RecordMatch(SearchParameter searchParam, int resultCount, Guid controlCallId, Guid testCallId, Dictionary<string, List<int>> slotTypeMapping)
     {
         // Track this match
         var result = new ComparisonResult
@@ -318,9 +364,12 @@ public class ComparisonService
             Matched = true,
             ControlCount = resultCount,
             TestCount = resultCount,
-            CallId = searchParam.CallId,
+            CallId = searchParam.CallId, // Original CallId from database
+            ControlCallId = controlCallId, // Actual CallId used for Control search
+            TestCallId = testCallId, // Actual CallId used for Test search
             CallTime = searchParam.CallTime,
-            SearchServiceName = searchParam.ClassName
+            SearchServiceName = searchParam.ClassName,
+            InBothBySlotType = slotTypeMapping // All results matched, so store in InBoth
         };
         
         _comparisonResults.Add(result);

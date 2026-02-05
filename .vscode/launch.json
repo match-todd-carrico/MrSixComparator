@@ -2,18 +2,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            // Use IntelliSense to find out which attributes exist for C# debugging
-            // Use hover for the description of the existing attributes
-            // For further information visit https://github.com/dotnet/vscode-csharp/blob/main/debugger-launchjson.md
-            "name": ".NET Core Launch (console)",
+            "name": "Launch Blazor App",
             "type": "coreclr",
             "request": "launch",
-            "preLaunchTask": "build",
-            // If you have changed target frameworks, make sure to update the program path.
-            "program": "${workspaceFolder}/MrSixResultsComparator/bin/Debug/net10.0/MrSixResultsComparator.dll",
+            "preLaunchTask": "build-blazor",
+            "program": "${workspaceFolder}/MrSixResultsComparator.BlazorApp/bin/Debug/net10.0-windows10.0.26100.0/MrSixResultsComparator.BlazorApp.dll",
             "args": [],
-            "cwd": "${workspaceFolder}/MrSixResultsComparator",
-            // For more information about the 'console' field, see https://aka.ms/VSCode-CS-LaunchJson-Console
+            "cwd": "${workspaceFolder}/MrSixResultsComparator.BlazorApp",
             "console": "internalConsole",
             "stopAtEntry": false
         },

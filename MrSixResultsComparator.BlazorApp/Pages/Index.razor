@@ -29,16 +29,8 @@
     </div>
 </div>
 
-@if (showContextMenu)
-{
-    <div class="context-menu" style="position: fixed; left: @(contextMenuX)px; top: @(contextMenuY)px; z-index: 1000;">
-        <div class="context-menu-item" @onclick="CopyContextValue">
-            📋 Copy @contextMenuLabel
-        </div>
-    </div>
-}
 
-<div class="container" @onclick="HideContextMenu">
+<div class="container">
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
         <div class="card">
             <h2>Configuration</h2>
@@ -160,6 +152,33 @@
         var confirmedMismatchCount = resultsSnapshot.Count(r => !r.Matched && (r.RetryMatched == false || r.RetryMatched == null));
         var totalMatched = matchedCount + matchedOnRetryCount; // Include transient mismatches as "matched"
         
+        // Calculate result-based metrics (total individual results that matched vs total results)
+        var totalMatchedResults = resultsSnapshot.Sum(r => r.InBoth.Count);
+        var totalResults = resultsSnapshot.Sum(r => r.InBoth.Count + r.OnlyInControl.Count + r.OnlyInTest.Count);
+        
+        // Calculate mismatches by ResultSlotType
+        var mismatchedResults = resultsSnapshot.Where(r => !r.Matched).ToList();
+        var slotTypeBreakdown = new Dictionary<string, int>();
+        
+        foreach (var result in mismatchedResults)
+        {
+            // Count mismatches from OnlyInControl
+            foreach (var kvp in result.OnlyInControlBySlotType)
+            {
+                if (!slotTypeBreakdown.ContainsKey(kvp.Key))
+                    slotTypeBreakdown[kvp.Key] = 0;
+                slotTypeBreakdown[kvp.Key] += kvp.Value.Count;
+            }
+            
+            // Count mismatches from OnlyInTest
+            foreach (var kvp in result.OnlyInTestBySlotType)
+            {
+                if (!slotTypeBreakdown.ContainsKey(kvp.Key))
+                    slotTypeBreakdown[kvp.Key] = 0;
+                slotTypeBreakdown[kvp.Key] += kvp.Value.Count;
+            }
+        }
+        
         <div class="card">
             <h2>Summary</h2>
             <div class="summary-grid">
@@ -180,11 +199,36 @@
                     <p class="value" style="color: var(--danger-color);">@confirmedMismatchCount</p>
                 </div>
                 <div class="summary-card">
-                    <h3>Success Rate</h3>
+                    <h3>Search Success Rate</h3>
                     <p class="value">@GetSuccessRate(totalMatched, resultsSnapshot.Count)%</p>
+                </div>
+                <div class="summary-card">
+                    <h3>Result Match Rate</h3>
+                    <p class="value">@GetSuccessRate(totalMatchedResults, totalResults)%</p>
+                    <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">@totalMatchedResults.ToString("N0") / @totalResults.ToString("N0") results</p>
                 </div>
             </div>
         </div>
+
+        @if (slotTypeBreakdown.Any())
+        {
+            <div class="card">
+                <h2>Mismatches by ResultSlotType</h2>
+                <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">
+                    Breakdown of mismatched results by their slot type
+                </p>
+                <div class="summary-grid">
+                    @foreach (var kvp in slotTypeBreakdown.OrderByDescending(x => x.Value))
+                    {
+                        <div class="summary-card">
+                            <h3>@kvp.Key</h3>
+                            <p class="value" style="color: var(--danger-color);">@kvp.Value.ToString("N0")</p>
+                            <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">mismatched results</p>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
 
         <div class="card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
@@ -274,12 +318,7 @@
                                                         }
                                                     }
                                                 </td>
-                                                <td style="cursor: context-menu;" 
-                                                    title="@result.SearcherUserId.ToString() - Right-click to copy"
-                                                    @oncontextmenu="@((e) => ShowContextMenu(e, result.SearcherUserId.ToString(), "SearcherUserId"))"
-                                                    @oncontextmenu:preventDefault="true">
-                                                    <strong style="color: #0066cc; text-decoration: underline dotted;">@result.SearcherUserId</strong>
-                                                </td>
+                                                <td><strong>@result.SearcherUserId</strong></td>
                                                 <td>
                                                     @result.ControlCount
                                                     @if (result.WasRetried && result.RetryControlCount.HasValue)
@@ -294,11 +333,28 @@
                                                         <span style="color: #666; font-size: 0.85rem;"> → @result.RetryTestCount</span>
                                                     }
                                                 </td>
-                                                <td style="font-family: monospace; font-size: 0.85rem; cursor: context-menu;" 
-                                                    title="@result.CallId.ToString() - Right-click to copy"
-                                                    @oncontextmenu="@((e) => ShowContextMenu(e, result.CallId.ToString(), "CallId"))"
-                                                    @oncontextmenu:preventDefault="true">
-                                                    <span style="color: #0066cc; text-decoration: underline dotted;">@result.CallId.ToString().Substring(0, 8)...</span>
+                                                <td style="font-family: monospace; font-size: 0.85rem;">
+                                                    @if (!result.Matched && result.RetryMatched == false)
+                                                    {
+                                                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                                                            <a href="http://@Config.MrSixControl:8888/admin/getExplain?callid=@result.ControlCallId" 
+                                                               target="_blank" 
+                                                               style="color: #0066cc; text-decoration: none; font-size: 0.85rem;"
+                                                               title="View explain on Control server (@result.ControlCallId)">
+                                                                📊 Control
+                                                            </a>
+                                                            <a href="http://@Config.MrSixTest:8888/admin/getExplain?callid=@result.TestCallId" 
+                                                               target="_blank" 
+                                                               style="color: #0066cc; text-decoration: none; font-size: 0.85rem;"
+                                                               title="View explain on Test server (@result.TestCallId)">
+                                                                📊 Test
+                                                            </a>
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span style="color: #999;">N/A</span>
+                                                    }
                                                 </td>
                                                 <td>
                                                     @if (!result.Matched)
@@ -391,12 +447,7 @@
                                             }
                                         </td>
                                         <td><span class="service-badge">@result.SearchServiceName</span></td>
-                                        <td style="cursor: context-menu;" 
-                                            title="@result.SearcherUserId.ToString() - Right-click to copy"
-                                            @oncontextmenu="@((e) => ShowContextMenu(e, result.SearcherUserId.ToString(), "SearcherUserId"))"
-                                            @oncontextmenu:preventDefault="true">
-                                            <strong style="color: #0066cc; text-decoration: underline dotted;">@result.SearcherUserId</strong>
-                                        </td>
+                                        <td><strong>@result.SearcherUserId</strong></td>
                                         <td>
                                             @result.ControlCount
                                             @if (result.WasRetried && result.RetryControlCount.HasValue)
@@ -411,11 +462,28 @@
                                                 <span style="color: #666; font-size: 0.85rem;"> → @result.RetryTestCount</span>
                                             }
                                         </td>
-                                        <td style="font-family: monospace; font-size: 0.85rem; cursor: context-menu;" 
-                                            title="@result.CallId.ToString() - Right-click to copy"
-                                            @oncontextmenu="@((e) => ShowContextMenu(e, result.CallId.ToString(), "CallId"))"
-                                            @oncontextmenu:preventDefault="true">
-                                            <span style="color: #0066cc; text-decoration: underline dotted;">@result.CallId.ToString().Substring(0, 8)...</span>
+                                        <td style="font-family: monospace; font-size: 0.85rem;">
+                                            @if (!result.Matched && result.RetryMatched == false)
+                                            {
+                                                <div style="display: flex; flex-direction: column; gap: 4px;">
+                                                    <a href="http://@Config.MrSixControl:8888/admin/getExplain?callid=@result.ControlCallId" 
+                                                       target="_blank" 
+                                                       style="color: #0066cc; text-decoration: none; font-size: 0.85rem;"
+                                                       title="View explain on Control server (@result.ControlCallId)">
+                                                        📊 Control
+                                                    </a>
+                                                    <a href="http://@Config.MrSixTest:8888/admin/getExplain?callid=@result.TestCallId" 
+                                                       target="_blank" 
+                                                       style="color: #0066cc; text-decoration: none; font-size: 0.85rem;"
+                                                       title="View explain on Test server (@result.TestCallId)">
+                                                        📊 Test
+                                                    </a>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <span style="color: #999;">N/A</span>
+                                            }
                                         </td>
                                         <td>
                                             @if (!result.Matched)
@@ -468,8 +536,6 @@
     }
 </div>
 
-@inject IJSRuntime JSRuntime
-
 @code {
     private string? errorMessage;
     private string filterText = "";
@@ -478,11 +544,6 @@
     private bool isInitializing = false;
     private bool isRefreshingParameters = false;
     private string initializationMessage = "";
-    private bool showContextMenu = false;
-    private double contextMenuX = 0;
-    private double contextMenuY = 0;
-    private string contextMenuValue = "";
-    private string contextMenuLabel = "";
     private List<string> allSearchServices = new List<string>
     {
         "Stack",
@@ -567,7 +628,7 @@
         catch (Exception ex)
         {
             errorMessage = $"Error refreshing parameters: {ex.Message}";
-            StateService.SetCachedSearchParameters(null, 0);
+            StateService.SetCachedSearchParameters(null!, 0);
         }
         finally
         {
@@ -622,6 +683,12 @@
             
             // Clear initializing state
             isInitializing = false;
+            
+            if (StateService.CachedSearchParameters == null || !StateService.CachedSearchParameters.Any())
+            {
+                throw new InvalidOperationException("Failed to load search parameters");
+            }
+            
             StateService.SetProgress(0, StateService.CachedSearchParameters.Count, $"Loaded {StateService.CachedSearchParameters.Count} search parameters");
 
             // Execute comparisons
@@ -729,39 +796,6 @@
         }
 
         return filtered.GroupBy(r => r.SiteCode).OrderBy(g => g.Key);
-    }
-
-    private void ShowContextMenu(Microsoft.AspNetCore.Components.Web.MouseEventArgs e, string value, string label)
-    {
-        contextMenuX = e.ClientX;
-        contextMenuY = e.ClientY;
-        contextMenuValue = value;
-        contextMenuLabel = label;
-        showContextMenu = true;
-        StateHasChanged();
-    }
-
-    private void HideContextMenu()
-    {
-        showContextMenu = false;
-    }
-
-    private async Task CopyContextValue()
-    {
-        await CopyToClipboard(contextMenuValue);
-        HideContextMenu();
-    }
-
-    private async Task CopyToClipboard(string text)
-    {
-        try
-        {
-            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", text);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to copy to clipboard: {ex.Message}");
-        }
     }
 
     public void Dispose()

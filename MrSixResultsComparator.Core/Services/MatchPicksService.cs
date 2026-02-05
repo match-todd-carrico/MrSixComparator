@@ -20,7 +20,8 @@ public class MatchPicksService : ISearchService
     public Task<SearchResponse<SearchResultRow>> ExecuteSearch(
         SearchParameter searcher, 
         string pinnedToServerName, 
-        string? config = null)
+        string? config = null,
+        bool enableExplain = false)
     {
         SearchResponse<SearchResultRow>? response = null;
 
@@ -40,6 +41,13 @@ public class MatchPicksService : ISearchService
         };
 
         args.ExtensionParams = new List<string>(_config.ExtensionParams);
+        
+        // Add explain parameter if requested (only for retry/verification runs)
+        if (enableExplain)
+        {
+            args.ExtensionParams.Add("explain");
+            Log.Debug("Explain tracking enabled for MatchPicks on {ServerName}", pinnedToServerName);
+        }
         
         args.DynamicArgs ??= new Dictionary<string, string>();
         args.DynamicArgs["OCallId"] = searcher.CallId.ToString();
@@ -67,5 +75,25 @@ public class MatchPicksService : ISearchService
             return new List<int>();
         
         return response.Results.Select(r => r.UserId).ToList();
+    }
+
+    public Dictionary<string, List<int>> ExtractUserIdsBySlotType(SearchResponse<SearchResultRow> response)
+    {
+        var result = new Dictionary<string, List<int>>();
+        
+        if (response?.Results == null)
+            return result;
+        
+        foreach (var row in response.Results)
+        {
+            var slotType = row.ResultSlotType.ToString();
+            
+            if (!result.ContainsKey(slotType))
+                result[slotType] = new List<int>();
+            
+            result[slotType].Add(row.UserId);
+        }
+        
+        return result;
     }
 }
