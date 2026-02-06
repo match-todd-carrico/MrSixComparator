@@ -147,6 +147,11 @@ body {
     color: var(--text-color);
 }
 
+.btn-danger {
+    background: var(--danger-color);
+    color: white;
+}
+
 .progress-container {
     margin: 20px 0;
 }
@@ -239,6 +244,32 @@ body {
 
 .summary-card.danger {
     border-left-color: var(--danger-color);
+}
+
+.slot-card {
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.slot-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.slot-card-selected {
+    border-left-color: var(--danger-color);
+    outline: 2px solid var(--danger-color);
+    outline-offset: -2px;
+    background: #fef5f5;
+}
+
+.slot-detail-panel {
+    margin-top: 20px;
+    padding: 20px;
+    background: var(--background-color);
+    border-radius: 8px;
+    border-left: 4px solid var(--danger-color);
+    animation: modalSlideIn 0.2s ease-out;
 }
 
 .summary-card h3 {
@@ -379,4 +410,173 @@ body {
     font-size: 0.8rem;
     font-weight: 500;
     font-family: monospace;
+}
+
+/* CallId clickable link */
+.callid-link {
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: var(--primary-color);
+    text-decoration: none;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: all 0.2s;
+}
+
+.callid-link:hover {
+    background: #e8f4fd;
+    text-decoration: underline;
+}
+
+/* Modal overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    z-index: 1000;
+    padding: 30px;
+    overflow-y: auto;
+}
+
+.modal-content {
+    background: var(--card-background);
+    border-radius: 10px;
+    width: 100%;
+    max-width: 1100px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    animation: modalSlideIn 0.2s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 25px;
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    background: var(--card-background);
+    z-index: 1;
+    border-radius: 10px 10px 0 0;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: var(--primary-color);
+    font-size: 1.3rem;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 1.8rem;
+    cursor: pointer;
+    color: #666;
+    padding: 0 5px;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--danger-color);
+}
+
+.modal-body {
+    padding: 20px 25px 25px;
+}
+
+/* SearchLog detail grid */
+.searchlog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+}
+
+.searchlog-section {
+    background: var(--background-color);
+    border-radius: 6px;
+    padding: 15px;
+}
+
+.searchlog-section h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--primary-color);
+    margin: 0 0 10px 0;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--primary-color);
+}
+
+/* Detail key-value table */
+.detail-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.detail-table tr:not(:last-child) td {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.detail-table td {
+    padding: 5px 8px;
+    font-size: 0.88rem;
+    vertical-align: top;
+}
+
+.detail-table td.label {
+    font-weight: 600;
+    color: #555;
+    white-space: nowrap;
+    width: 1%;
+    padding-right: 15px;
+}
+
+.detail-table td.value {
+    color: var(--text-color);
+}
+
+.detail-table td.monospace {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 0.82rem;
+}
+
+/* JSON display */
+.json-section {
+    grid-column: 1 / -1;
+}
+
+.json-display {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 15px;
+    border-radius: 6px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+    margin: 0;
 }

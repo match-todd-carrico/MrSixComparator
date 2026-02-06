@@ -64,6 +64,12 @@
                         <span>▶️ Start Comparison</span>
                     }
                 </button>
+                @if (StateService.IsRunning || isInitializing)
+                {
+                    <button class="btn btn-danger" @onclick="CancelComparison">
+                        ⛔ Cancel
+                    </button>
+                }
                 <button class="btn btn-secondary" @onclick="ClearResults" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
                     🗑️ Clear Results
                 </button>
@@ -156,9 +162,10 @@
         var totalMatchedResults = resultsSnapshot.Sum(r => r.InBoth.Count);
         var totalResults = resultsSnapshot.Sum(r => r.InBoth.Count + r.OnlyInControl.Count + r.OnlyInTest.Count);
         
-        // Calculate mismatches by ResultSlotType
+        // Calculate mismatches by ResultSlotType (with contributing search detail)
         var mismatchedResults = resultsSnapshot.Where(r => !r.Matched).ToList();
         var slotTypeBreakdown = new Dictionary<string, int>();
+        var slotTypeContributors = new Dictionary<string, List<(ComparisonResult Result, int OnlyControlCount, int OnlyTestCount)>>();
         
         foreach (var result in mismatchedResults)
         {
@@ -166,7 +173,10 @@
             foreach (var kvp in result.OnlyInControlBySlotType)
             {
                 if (!slotTypeBreakdown.ContainsKey(kvp.Key))
+                {
                     slotTypeBreakdown[kvp.Key] = 0;
+                    slotTypeContributors[kvp.Key] = new();
+                }
                 slotTypeBreakdown[kvp.Key] += kvp.Value.Count;
             }
             
@@ -174,8 +184,27 @@
             foreach (var kvp in result.OnlyInTestBySlotType)
             {
                 if (!slotTypeBreakdown.ContainsKey(kvp.Key))
+                {
                     slotTypeBreakdown[kvp.Key] = 0;
+                    slotTypeContributors[kvp.Key] = new();
+                }
                 slotTypeBreakdown[kvp.Key] += kvp.Value.Count;
+            }
+            
+            // Build contributor entries per slot type
+            var allSlotTypes = result.OnlyInControlBySlotType.Keys
+                .Union(result.OnlyInTestBySlotType.Keys)
+                .Distinct();
+            foreach (var slotType in allSlotTypes)
+            {
+                var onlyControlCount = result.OnlyInControlBySlotType.TryGetValue(slotType, out var oc) ? oc.Count : 0;
+                var onlyTestCount = result.OnlyInTestBySlotType.TryGetValue(slotType, out var ot) ? ot.Count : 0;
+                if (onlyControlCount > 0 || onlyTestCount > 0)
+                {
+                    if (!slotTypeContributors.ContainsKey(slotType))
+                        slotTypeContributors[slotType] = new();
+                    slotTypeContributors[slotType].Add((result, onlyControlCount, onlyTestCount));
+                }
             }
         }
         
@@ -215,18 +244,78 @@
             <div class="card">
                 <h2>Mismatches by ResultSlotType</h2>
                 <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">
-                    Breakdown of mismatched results by their slot type
+                    Breakdown of mismatched results by their slot type — click a card to see contributing searches
                 </p>
                 <div class="summary-grid">
                     @foreach (var kvp in slotTypeBreakdown.OrderByDescending(x => x.Value))
                     {
-                        <div class="summary-card">
+                        var slotKey = kvp.Key;
+                        var isSelected = selectedSlotType == slotKey;
+                        <div class="summary-card slot-card @(isSelected ? "slot-card-selected" : "")" 
+                             @onclick="@(() => ToggleSlotType(slotKey))"
+                             title="Click to see contributing searches">
                             <h3>@kvp.Key</h3>
                             <p class="value" style="color: var(--danger-color);">@kvp.Value.ToString("N0")</p>
                             <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">mismatched results</p>
                         </div>
                     }
                 </div>
+
+                @if (selectedSlotType != null && slotTypeContributors.TryGetValue(selectedSlotType, out var contributors))
+                {
+                    <div class="slot-detail-panel">
+                        <h3 style="margin: 0 0 12px 0; color: var(--primary-color);">
+                            Searches contributing to <strong>@selectedSlotType</strong> mismatches
+                            <span style="font-weight: 400; font-size: 0.85rem; color: #666;"> — @contributors.Count search(es)</span>
+                        </h3>
+                        <table class="results-table" style="margin-top: 0;">
+                            <thead>
+                                <tr>
+                                    <th>Search Service</th>
+                                    <th>Searcher User ID</th>
+                                    <th>Site Code</th>
+                                    <th>Only in Control</th>
+                                    <th>Only in Test</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var c in contributors.OrderByDescending(c => c.OnlyControlCount + c.OnlyTestCount))
+                                {
+                                    <tr>
+                                        <td><span class="service-badge">@c.Result.SearchServiceName</span></td>
+                                        <td>
+                                            <strong>@c.Result.SearcherUserId</strong>
+                                            <br />
+                                            <a href="/parameters?filter=@c.Result.SearcherUserId"
+                                               style="font-size: 0.8rem; color: var(--primary-color); text-decoration: none;"
+                                               title="View search parameters for this user">
+                                                📋 Params
+                                            </a>
+                                        </td>
+                                        <td>@c.Result.SiteCode</td>
+                                        <td style="color: var(--danger-color); font-weight: 600;">@c.OnlyControlCount</td>
+                                        <td style="color: var(--primary-color); font-weight: 600;">@c.OnlyTestCount</td>
+                                        <td>
+                                            @if (c.Result.WasRetried && c.Result.RetryMatched == true)
+                                            {
+                                                <span class="badge badge-warning">⚠️ Transient</span>
+                                            }
+                                            else if (c.Result.WasRetried && c.Result.RetryMatched == false)
+                                            {
+                                                <span class="badge badge-danger">🔁 Confirmed</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge badge-danger">✗ Diff</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
             </div>
         }
 
@@ -318,7 +407,15 @@
                                                         }
                                                     }
                                                 </td>
-                                                <td><strong>@result.SearcherUserId</strong></td>
+                                                <td>
+                                                    <strong>@result.SearcherUserId</strong>
+                                                    <br />
+                                                    <a href="/parameters?filter=@result.SearcherUserId" 
+                                                       style="font-size: 0.8rem; color: var(--primary-color); text-decoration: none;"
+                                                       title="View search parameters for this user">
+                                                        📋 Params
+                                                    </a>
+                                                </td>
                                                 <td>
                                                     @result.ControlCount
                                                     @if (result.WasRetried && result.RetryControlCount.HasValue)
@@ -447,7 +544,15 @@
                                             }
                                         </td>
                                         <td><span class="service-badge">@result.SearchServiceName</span></td>
-                                        <td><strong>@result.SearcherUserId</strong></td>
+                                        <td>
+                                            <strong>@result.SearcherUserId</strong>
+                                            <br />
+                                            <a href="/parameters?filter=@result.SearcherUserId" 
+                                               style="font-size: 0.8rem; color: var(--primary-color); text-decoration: none;"
+                                               title="View search parameters for this user">
+                                                📋 Params
+                                            </a>
+                                        </td>
                                         <td>
                                             @result.ControlCount
                                             @if (result.WasRetried && result.RetryControlCount.HasValue)
@@ -544,6 +649,8 @@
     private bool isInitializing = false;
     private bool isRefreshingParameters = false;
     private string initializationMessage = "";
+    private CancellationTokenSource? _cts;
+    private string? selectedSlotType;
     private List<string> allSearchServices = new List<string>
     {
         "Stack",
@@ -639,6 +746,10 @@
 
     private async Task StartComparison()
     {
+        _cts?.Dispose();
+        _cts = new CancellationTokenSource();
+        var cancellationToken = _cts.Token;
+
         try
         {
             errorMessage = null;
@@ -662,7 +773,7 @@
                 await Task.Delay(50);
                 
                 var shardId = await Task.Run(() => 
-                    ShardValidationService.ValidateAndGetShardId(Config.MrSixControl, Config.MrSixTest));
+                    ShardValidationService.ValidateAndGetShardId(Config.MrSixControl, Config.MrSixTest), cancellationToken);
                 
                 // Get search parameters - this is the slow operation
                 initializationMessage = $"Loading search parameters from database (ShardId: {shardId})...";
@@ -670,7 +781,7 @@
                 await Task.Delay(50);
                 
                 var searchParameters = await Task.Run(() => 
-                    SearchParameterService.GetSearchParameters(shardId));
+                    SearchParameterService.GetSearchParameters(shardId), cancellationToken);
                 
                 StateService.SetCachedSearchParameters(searchParameters, shardId);
             }
@@ -680,6 +791,8 @@
                 await InvokeAsync(StateHasChanged);
                 await Task.Delay(50);
             }
+            
+            cancellationToken.ThrowIfCancellationRequested();
             
             // Clear initializing state
             isInitializing = false;
@@ -718,9 +831,15 @@
                 StateService.AddResult(args.Result);
             };
 
-            await comparisonService.CompareSearchResults(StateService.CachedSearchParameters);
+            await comparisonService.CompareSearchResults(StateService.CachedSearchParameters, cancellationToken);
             
             StateService.SetProgress(StateService.CachedSearchParameters.Count, StateService.CachedSearchParameters.Count, "Comparison complete!");
+        }
+        catch (OperationCanceledException)
+        {
+            var completed = StateService.Current;
+            StateService.SetProgress(completed, StateService.Total, $"Cancelled after {completed} of {StateService.Total} comparisons.");
+            isInitializing = false;
         }
         catch (Exception ex)
         {
@@ -735,10 +854,21 @@
         }
     }
 
+    private void CancelComparison()
+    {
+        _cts?.Cancel();
+    }
+
     private void ClearResults()
     {
         StateService.ClearResults();
+        selectedSlotType = null;
         errorMessage = null;
+    }
+
+    private void ToggleSlotType(string slotType)
+    {
+        selectedSlotType = selectedSlotType == slotType ? null : slotType;
     }
 
     private double GetProgressPercentage()
@@ -801,5 +931,7 @@
     public void Dispose()
     {
         StateService.StateChanged -= OnStateChanged;
+        _cts?.Cancel();
+        _cts?.Dispose();
     }
 }

@@ -1,14 +1,18 @@
 @page "/parameters"
 @using MrSixResultsComparator.Core.Models
+@using MrSixResultsComparator.Core.Services
 @using MrSixResultsComparator.BlazorApp.Data
+@using Newtonsoft.Json
+@using Newtonsoft.Json.Linq
 @inject ComparisonStateService StateService
+@inject SearchLogService SearchLogService
 @inject NavigationManager Navigation
 @implements IDisposable
 
 <div class="header">
     <div class="container">
         <div style="display: flex; align-items: center; gap: 15px;">
-            <a href="/" style="color: white; text-decoration: none; font-size: 1.5rem;">←</a>
+            <a href="/" style="color: white; text-decoration: none; font-size: 1.5rem;">&#x2190;</a>
             <div>
                 <h1>Cached Search Parameters</h1>
                 <p>View and inspect the cached search parameters from the database</p>
@@ -23,7 +27,7 @@
         <div class="card">
             <h2>No Parameters Cached</h2>
             <p style="color: #666; margin-bottom: 15px;">No search parameters are currently cached. Run a comparison to load parameters from the database.</p>
-            <a href="/" class="btn btn-primary">← Back to Comparisons</a>
+            <a href="/" class="btn btn-primary">&#x2190; Back to Comparisons</a>
         </div>
     }
     else
@@ -36,7 +40,7 @@
                     <h2 style="margin: 0;">Search Parameters</h2>
                     <p style="color: #666; margin: 5px 0 0 0;">ShardId: @StateService.CachedShardId | Total: @parameters.Count parameters</p>
                 </div>
-                <a href="/" class="btn btn-secondary">← Back to Comparisons</a>
+                <a href="/" class="btn btn-secondary">&#x2190; Back to Comparisons</a>
             </div>
             
             <div class="filter-bar">
@@ -56,7 +60,7 @@
 
                 <div style="margin-bottom: 30px;">
                     <h3 style="color: var(--primary-color); margin-bottom: 15px;">
-                        🔍 @classGroup.Key - @groupCount parameter(s)
+                        &#x1F50D; @classGroup.Key - @groupCount parameter(s)
                     </h3>
                     
                     <table class="results-table">
@@ -85,7 +89,14 @@
                                     <td>@param.GenderGenderSeek</td>
                                     <td>@param.LAge - @param.UAge</td>
                                     <td style="font-size: 0.85rem;">@param.CallTime.ToString("MM/dd HH:mm:ss")</td>
-                                    <td style="font-family: monospace; font-size: 0.85rem;">@param.CallId.ToString().Substring(0, 8)...</td>
+                                    <td>
+                                        <a href="javascript:void(0)" 
+                                           class="callid-link"
+                                           @onclick="@(() => ShowSearchLog(param.CallId, param.CallTime))"
+                                           title="Click to view SearchLog row for @param.CallId">
+                                            @param.CallId.ToString().Substring(0, 8)...
+                                        </a>
+                                    </td>
                                 </tr>
                             }
                         </tbody>
@@ -103,13 +114,173 @@
     }
 </div>
 
+@* SearchLog Detail Modal *@
+@if (showSearchLogModal)
+{
+    <div class="modal-overlay" @onclick="CloseModal">
+        <div class="modal-content" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h2>SearchLog Entry</h2>
+                <button class="modal-close" @onclick="CloseModal">&times;</button>
+            </div>
+            
+            @if (isLoadingSearchLog)
+            {
+                <div style="text-align: center; padding: 40px;">
+                    <div class="spinner"></div>
+                    <p style="color: var(--primary-color); font-weight: 500;">Loading SearchLog entry...</p>
+                </div>
+            }
+            else if (searchLogError != null)
+            {
+                <div style="padding: 20px; color: var(--danger-color);">
+                    <strong>Error:</strong> @searchLogError
+                </div>
+            }
+            else if (selectedSearchLog != null)
+            {
+                <div class="modal-body">
+                    <div class="searchlog-grid">
+                        <div class="searchlog-section">
+                            <h3>Identity</h3>
+                            <table class="detail-table">
+                                <tr><td class="label">CallID</td><td class="value monospace">@selectedSearchLog.CallID</td></tr>
+                                <tr><td class="label">CallTime</td><td class="value">@selectedSearchLog.CallTime.ToString("yyyy-MM-dd HH:mm:ss.fff")</td></tr>
+                                <tr><td class="label">SID</td><td class="value monospace">@selectedSearchLog.SID</td></tr>
+                                <tr><td class="label">SearcherUserID</td><td class="value"><strong>@selectedSearchLog.SearcherUserID</strong></td></tr>
+                                <tr><td class="label">SiteCode</td><td class="value">@selectedSearchLog.SiteCode</td></tr>
+                                <tr><td class="label">URLCode</td><td class="value">@(selectedSearchLog.URLCode?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">PlatformID</td><td class="value">@(selectedSearchLog.PlatformID?.ToString() ?? "NULL")</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="searchlog-section">
+                            <h3>Search Info</h3>
+                            <table class="detail-table">
+                                <tr><td class="label">Searchname</td><td class="value">@selectedSearchLog.Searchname</td></tr>
+                                <tr><td class="label">ClassName</td><td class="value">@selectedSearchLog.ClassName</td></tr>
+                                <tr><td class="label">Algorithm</td><td class="value">@selectedSearchLog.Algorithm</td></tr>
+                                <tr><td class="label">Status</td><td class="value">@selectedSearchLog.Status</td></tr>
+                                <tr><td class="label">Duration (ms)</td><td class="value"><strong>@selectedSearchLog.Duration</strong></td></tr>
+                                <tr><td class="label">RequestCount</td><td class="value">@selectedSearchLog.RequestCount</td></tr>
+                                <tr><td class="label">ReturnedCount</td><td class="value">@selectedSearchLog.ReturnedCount</td></tr>
+                                <tr><td class="label">AvailableMatches</td><td class="value">@selectedSearchLog.AvailableMatches</td></tr>
+                                <tr><td class="label">WhatIfSearchId</td><td class="value">@(selectedSearchLog.WhatIfSearchId?.ToString() ?? "NULL")</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="searchlog-section">
+                            <h3>Server</h3>
+                            <table class="detail-table">
+                                <tr><td class="label">Servername</td><td class="value">@selectedSearchLog.Servername</td></tr>
+                                <tr><td class="label">HostName</td><td class="value">@selectedSearchLog.HostName</td></tr>
+                                <tr><td class="label">AppName</td><td class="value">@selectedSearchLog.AppName</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="searchlog-section">
+                            <h3>Demographics</h3>
+                            <table class="detail-table">
+                                <tr><td class="label">GenderGenderSeek</td><td class="value">@(selectedSearchLog.GenderGenderSeek?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">Age</td><td class="value">@(selectedSearchLog.Age?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">Age Range</td><td class="value">@(selectedSearchLog.LAge?.ToString() ?? "?") - @(selectedSearchLog.UAge?.ToString() ?? "?")</td></tr>
+                                <tr><td class="label">Height</td><td class="value">@(selectedSearchLog.Height?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">Height Range</td><td class="value">@(selectedSearchLog.LHeight?.ToString() ?? "?") - @(selectedSearchLog.UHeight?.ToString() ?? "?")</td></tr>
+                                <tr><td class="label">OtherUserId</td><td class="value">@(selectedSearchLog.OtherUserId?.ToString() ?? "NULL")</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="searchlog-section">
+                            <h3>Geography</h3>
+                            <table class="detail-table">
+                                <tr><td class="label">SearchGeoTypeID</td><td class="value">@selectedSearchLog.SearchGeoTypeID</td></tr>
+                                <tr><td class="label">CountryCode</td><td class="value">@(selectedSearchLog.CountryCode?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">StateCode</td><td class="value">@(selectedSearchLog.StateCode?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">CityCode</td><td class="value">@(selectedSearchLog.CityCode?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">CityCodes</td><td class="value monospace" style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="@(selectedSearchLog.CityCodes ?? "")">@(selectedSearchLog.CityCodes ?? "NULL")</td></tr>
+                                <tr><td class="label">PostalCode</td><td class="value">@(selectedSearchLog.PostalCode ?? "NULL")</td></tr>
+                                <tr><td class="label">Latitude</td><td class="value">@(selectedSearchLog.Latitude?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">Longitude</td><td class="value">@(selectedSearchLog.Longitude?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">CBSACode</td><td class="value">@(selectedSearchLog.CBSACode?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">Distance</td><td class="value">@(selectedSearchLog.Distance?.ToString() ?? "NULL")</td></tr>
+                            </table>
+                        </div>
+
+                        <div class="searchlog-section">
+                            <h3>Filters</h3>
+                            <table class="detail-table">
+                                <tr><td class="label">UseDefaultDistance</td><td class="value">@selectedSearchLog.UseDefaultDistance</td></tr>
+                                <tr><td class="label">SearchCriteriaOptions</td><td class="value">@selectedSearchLog.SearchCriteriaOptions</td></tr>
+                                <tr><td class="label">PhotosOnly</td><td class="value">@selectedSearchLog.PhotosOnly</td></tr>
+                                <tr><td class="label">OnlineNow</td><td class="value">@(selectedSearchLog.OnlineNow?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">SpotlightOnly</td><td class="value">@selectedSearchLog.SpotlightOnly</td></tr>
+                                <tr><td class="label">SubscriberOnly</td><td class="value">@selectedSearchLog.SubscriberOnly</td></tr>
+                                <tr><td class="label">CertOnly</td><td class="value">@selectedSearchLog.CertOnly</td></tr>
+                                <tr><td class="label">SearchBlock</td><td class="value">@selectedSearchLog.SearchBlock</td></tr>
+                                <tr><td class="label">ServedByCommonality</td><td class="value">@(selectedSearchLog.ServedByCommonality?.ToString() ?? "NULL")</td></tr>
+                                <tr><td class="label">IMOnlyMs</td><td class="value">@(selectedSearchLog.IMOnlyMs?.ToString() ?? "NULL")</td></tr>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="searchlog-section" style="margin-top: 15px;">
+                        <h3>Attribute Strings</h3>
+                        <table class="detail-table">
+                            <tr><td class="label">SelfString</td><td class="value monospace" style="word-break: break-all;">@(selectedSearchLog.SelfString ?? "NULL")</td></tr>
+                            <tr><td class="label">SeekString</td><td class="value monospace" style="word-break: break-all;">@(selectedSearchLog.SeekString ?? "NULL")</td></tr>
+                            <tr><td class="label">WeightString</td><td class="value monospace" style="word-break: break-all;">@(selectedSearchLog.WeightString ?? "NULL")</td></tr>
+                            <tr><td class="label">KeyWord</td><td class="value">@(selectedSearchLog.KeyWord ?? "NULL")</td></tr>
+                        </table>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(selectedSearchLog.ParamBag))
+                    {
+                        <div class="searchlog-section json-section" style="margin-top: 15px;">
+                            <h3>ParamBag (JSON)</h3>
+                            <pre class="json-display">@FormatJson(selectedSearchLog.ParamBag)</pre>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(selectedSearchLog.ResultBag))
+                    {
+                        <div class="searchlog-section json-section" style="margin-top: 15px;">
+                            <h3>ResultBag (JSON)</h3>
+                            <pre class="json-display">@FormatJson(selectedSearchLog.ResultBag)</pre>
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div style="padding: 20px; color: #666;">
+                    No SearchLog entry found for this CallId/CallTime.
+                </div>
+            }
+        </div>
+    </div>
+}
+
 @code {
+    [SupplyParameterFromQuery(Name = "filter")]
+    public string? InitialFilter { get; set; }
+
     private string filterText = "";
     private string filterClassName = "";
+    
+    // SearchLog modal state
+    private bool showSearchLogModal = false;
+    private bool isLoadingSearchLog = false;
+    private string? searchLogError = null;
+    private SearchLogEntry? selectedSearchLog = null;
 
     protected override void OnInitialized()
     {
         StateService.StateChanged += OnStateChanged;
+        
+        if (!string.IsNullOrWhiteSpace(InitialFilter))
+        {
+            filterText = InitialFilter;
+        }
     }
 
     private void OnStateChanged()
@@ -121,6 +292,53 @@
     {
         filterClassName = e.Value?.ToString() ?? "";
         StateHasChanged();
+    }
+
+    private async Task ShowSearchLog(Guid callId, DateTime callTime)
+    {
+        showSearchLogModal = true;
+        isLoadingSearchLog = true;
+        searchLogError = null;
+        selectedSearchLog = null;
+        StateHasChanged();
+        
+        try
+        {
+            selectedSearchLog = await Task.Run(() => SearchLogService.GetSearchLogEntry(callId, callTime));
+        }
+        catch (Exception ex)
+        {
+            searchLogError = ex.Message;
+        }
+        finally
+        {
+            isLoadingSearchLog = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void CloseModal()
+    {
+        showSearchLogModal = false;
+        selectedSearchLog = null;
+        searchLogError = null;
+    }
+
+    private string FormatJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return "NULL";
+        
+        try
+        {
+            var parsed = JToken.Parse(json);
+            return parsed.ToString(Formatting.Indented);
+        }
+        catch
+        {
+            // If it's not valid JSON, return as-is
+            return json;
+        }
     }
 
     private IEnumerable<string> GetUniqueClassNames()

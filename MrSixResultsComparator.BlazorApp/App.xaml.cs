@@ -1,4 +1,4 @@
-﻿using System.Windows;
+using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using MrSixResultsComparator.Core.Configuration;
 using MrSixResultsComparator.Core.Services;
@@ -26,6 +26,8 @@ public partial class App : Application
         services.AddSingleton<ShardValidationService>();
         services.AddSingleton<SearchParameterService>(sp => 
             new SearchParameterService(sp.GetRequiredService<AppConfiguration>().SearchDataConnectionString));
+        services.AddSingleton<SearchLogService>(sp => 
+            new SearchLogService(sp.GetRequiredService<AppConfiguration>().SearchDataConnectionString));
         
         // Register all search services
         services.AddSingleton<StackSearchService>();

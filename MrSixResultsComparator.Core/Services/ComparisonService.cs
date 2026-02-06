@@ -65,7 +65,7 @@ public class ComparisonService
         };
     }
 
-    public async Task CompareSearchResults(List<SearchParameter> searchParameters)
+    public async Task CompareSearchResults(List<SearchParameter> searchParameters, CancellationToken cancellationToken = default)
     {
         // Filter search parameters based on enabled services
         var enabledSearchParameters = searchParameters
@@ -90,12 +90,21 @@ public class ComparisonService
 
         await Parallel.ForEachAsync(
             enabledSearchParameters, 
-            new ParallelOptions { MaxDegreeOfParallelism = _config.MaxParallelism }, 
+            new ParallelOptions 
+            { 
+                MaxDegreeOfParallelism = _config.MaxParallelism,
+                CancellationToken = cancellationToken 
+            }, 
             async (searchParam, ct) =>
             {
+                ct.ThrowIfCancellationRequested();
                 try
                 {
                     await CompareSearchParameter(searchParam);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw; // Let cancellation propagate
                 }
                 catch (Exception ex)
                 {
@@ -117,7 +126,7 @@ public class ComparisonService
         // Retry mismatched comparisons if enabled
         if (_config.AutoRetryMismatches)
         {
-            await RetryMismatchedComparisons(enabledSearchParameters);
+            await RetryMismatchedComparisons(enabledSearchParameters, cancellationToken);
         }
 
         OnProgressUpdated(new ComparisonProgressEventArgs 
@@ -128,7 +137,7 @@ public class ComparisonService
         });
     }
 
-    private async Task RetryMismatchedComparisons(List<SearchParameter> originalSearchParameters)
+    private async Task RetryMismatchedComparisons(List<SearchParameter> originalSearchParameters, CancellationToken cancellationToken = default)
     {
         // Get all mismatched results
         var mismatchedResults = _comparisonResults.Where(r => !r.Matched).ToList();
@@ -152,9 +161,14 @@ public class ComparisonService
 
         await Parallel.ForEachAsync(
             mismatchedResults,
-            new ParallelOptions { MaxDegreeOfParallelism = _config.MaxParallelism },
+            new ParallelOptions 
+            { 
+                MaxDegreeOfParallelism = _config.MaxParallelism,
+                CancellationToken = cancellationToken 
+            },
             async (mismatchedResult, ct) =>
             {
+                ct.ThrowIfCancellationRequested();
                 try
                 {
                     // Find the original search parameter
@@ -167,6 +181,10 @@ public class ComparisonService
                     {
                         await RetryComparisonForResult(mismatchedResult, searchParam);
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw; // Let cancellation propagate
                 }
                 catch (Exception ex)
                 {
