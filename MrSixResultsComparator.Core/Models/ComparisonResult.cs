@@ -26,4 +26,8 @@ public class ComparisonResult
     public Dictionary<string, List<int>> OnlyInControlBySlotType { get; set; } = new();
     public Dictionary<string, List<int>> OnlyInTestBySlotType { get; set; } = new();
     public Dictionary<string, List<int>> InBothBySlotType { get; set; } = new();
+    
+    // Data movement tracking - users ignored due to recent LastLoginDate (eventual consistency)
+    public List<int> IgnoredFromControl { get; set; } = new();
+    public List<int> IgnoredFromTest { get; set; } = new();
 }

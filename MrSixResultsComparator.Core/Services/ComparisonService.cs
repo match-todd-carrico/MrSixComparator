@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Serilog;
+using MrSIXProxyV2.ResultsV4;
 using MrSixResultsComparator.Core.Models;
 using MrSixResultsComparator.Core.Configuration;
 
@@ -287,17 +288,71 @@ public class ComparisonService
         var onlyInB = userIdsB.Except(userIdsA).ToList();
         var inBoth = userIdsA.Intersect(userIdsB).ToList();
         
-        bool hasDifferences = onlyInA.Any() || onlyInB.Any() || userIdsA.Count != userIdsB.Count;
+        // 5. Filter out users with recent LastLoginDate (data movement due to eventual consistency)
+        var ignoredFromControl = new List<int>();
+        var ignoredFromTest = new List<int>();
+        
+        if (_config.IgnoreRecentLogins && (onlyInA.Any() || onlyInB.Any()))
+        {
+            var threshold = DateTime.UtcNow.AddMinutes(-_config.RecentLoginThresholdMinutes);
+            
+            ignoredFromControl = FilterRecentLogins(onlyInA, controlResult, threshold);
+            ignoredFromTest = FilterRecentLogins(onlyInB, testResult, threshold);
+            
+            if (ignoredFromControl.Any())
+            {
+                onlyInA = onlyInA.Except(ignoredFromControl).ToList();
+                Log.Information("Ignored {Count} users from Control with recent LastLoginDate (data movement): {UserIds}",
+                    ignoredFromControl.Count, string.Join(",", ignoredFromControl));
+            }
+            
+            if (ignoredFromTest.Any())
+            {
+                onlyInB = onlyInB.Except(ignoredFromTest).ToList();
+                Log.Information("Ignored {Count} users from Test with recent LastLoginDate (data movement): {UserIds}",
+                    ignoredFromTest.Count, string.Join(",", ignoredFromTest));
+            }
+        }
+        
+        bool hasDifferences = onlyInA.Any() || onlyInB.Any();
 
         if (hasDifferences)
         {
             RecordDifference(searchParam, userIdsA, userIdsB, onlyInA, onlyInB, inBoth, 
-                controlResult.CallId, testResult.CallId, userIdsBySlotTypeA, userIdsBySlotTypeB);
+                controlResult.CallId, testResult.CallId, userIdsBySlotTypeA, userIdsBySlotTypeB,
+                ignoredFromControl, ignoredFromTest);
         }
         else
         {
-            RecordMatch(searchParam, userIdsA.Count, controlResult.CallId, testResult.CallId, userIdsBySlotTypeA);
+            RecordMatch(searchParam, userIdsA.Count, controlResult.CallId, testResult.CallId, userIdsBySlotTypeA,
+                ignoredFromControl, ignoredFromTest);
         }
+    }
+    
+    /// <summary>
+    /// Filters out user IDs from the "only in" list whose LastLoginDate is within the threshold.
+    /// These are likely data movement artifacts from the eventually consistent data model.
+    /// </summary>
+    private static List<int> FilterRecentLogins(
+        List<int> onlyInUserIds, 
+        SearchResponse<SearchResultRow> response, 
+        DateTime threshold)
+    {
+        if (response?.Results == null || !onlyInUserIds.Any())
+            return new List<int>();
+        
+        var recentUserIds = new List<int>();
+        var onlyInSet = new HashSet<int>(onlyInUserIds);
+        
+        foreach (var row in response.Results)
+        {
+            if (onlyInSet.Contains(row.UserId) && row.LastLoginDate >= threshold)
+            {
+                recentUserIds.Add(row.UserId);
+            }
+        }
+        
+        return recentUserIds;
     }
 
     private void RecordDifference(
@@ -310,7 +365,9 @@ public class ComparisonService
         Guid controlCallId,
         Guid testCallId,
         Dictionary<string, List<int>> slotTypeA,
-        Dictionary<string, List<int>> slotTypeB)
+        Dictionary<string, List<int>> slotTypeB,
+        List<int>? ignoredFromControl = null,
+        List<int>? ignoredFromTest = null)
     {
         // Calculate slot type breakdown
         var onlyInControlBySlotType = CalculateSlotTypeBreakdown(onlyInA, slotTypeA);
@@ -335,7 +392,9 @@ public class ComparisonService
             SearchServiceName = searchParam.ClassName,
             OnlyInControlBySlotType = onlyInControlBySlotType,
             OnlyInTestBySlotType = onlyInTestBySlotType,
-            InBothBySlotType = inBothBySlotType
+            InBothBySlotType = inBothBySlotType,
+            IgnoredFromControl = ignoredFromControl ?? new List<int>(),
+            IgnoredFromTest = ignoredFromTest ?? new List<int>()
         };
         
         _comparisonResults.Add(result);
@@ -348,6 +407,10 @@ public class ComparisonService
         Log.Warning("Control count: {ControlCount}, Test count: {TestCount}", userIdsA.Count, userIdsB.Count);
         Log.Warning("Only in Control: {OnlyInControl}", string.Join(",", onlyInA));
         Log.Warning("Only in Test: {OnlyInTest}", string.Join(",", onlyInB));
+        if (ignoredFromControl?.Any() == true)
+            Log.Information("Ignored from Control (data movement): {Ignored}", string.Join(",", ignoredFromControl));
+        if (ignoredFromTest?.Any() == true)
+            Log.Information("Ignored from Test (data movement): {Ignored}", string.Join(",", ignoredFromTest));
     }
 
     private Dictionary<string, List<int>> CalculateSlotTypeBreakdown(List<int> userIds, Dictionary<string, List<int>> slotTypeMapping)
@@ -372,7 +435,8 @@ public class ComparisonService
         return result;
     }
 
-    private void RecordMatch(SearchParameter searchParam, int resultCount, Guid controlCallId, Guid testCallId, Dictionary<string, List<int>> slotTypeMapping)
+    private void RecordMatch(SearchParameter searchParam, int resultCount, Guid controlCallId, Guid testCallId, Dictionary<string, List<int>> slotTypeMapping,
+        List<int>? ignoredFromControl = null, List<int>? ignoredFromTest = null)
     {
         // Track this match
         var result = new ComparisonResult
@@ -387,14 +451,25 @@ public class ComparisonService
             TestCallId = testCallId, // Actual CallId used for Test search
             CallTime = searchParam.CallTime,
             SearchServiceName = searchParam.ClassName,
-            InBothBySlotType = slotTypeMapping // All results matched, so store in InBoth
+            InBothBySlotType = slotTypeMapping, // All results matched, so store in InBoth
+            IgnoredFromControl = ignoredFromControl ?? new List<int>(),
+            IgnoredFromTest = ignoredFromTest ?? new List<int>()
         };
         
         _comparisonResults.Add(result);
         OnComparisonCompleted(new ComparisonResultEventArgs { Result = result });
         
-        Log.Information("Results match for SearcherUserId: {SearcherUserId} ({Count} results)", 
-            searchParam.SearcherUserId, resultCount);
+        var ignoredTotal = (ignoredFromControl?.Count ?? 0) + (ignoredFromTest?.Count ?? 0);
+        if (ignoredTotal > 0)
+        {
+            Log.Information("Results match for SearcherUserId: {SearcherUserId} ({Count} results, {Ignored} ignored as data movement)", 
+                searchParam.SearcherUserId, resultCount, ignoredTotal);
+        }
+        else
+        {
+            Log.Information("Results match for SearcherUserId: {SearcherUserId} ({Count} results)", 
+                searchParam.SearcherUserId, resultCount);
+        }
     }
 
     protected virtual void OnProgressUpdated(ComparisonProgressEventArgs e)

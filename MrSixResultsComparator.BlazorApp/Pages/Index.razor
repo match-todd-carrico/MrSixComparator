@@ -47,6 +47,16 @@
                     <label>Max Parallelism</label>
                     <input type="number" @bind="Config.MaxParallelism" min="1" max="20" disabled="@(StateService.IsRunning || isInitializing)" />
                 </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                    <label style="margin: 0;">
+                        <input type="checkbox" @bind="Config.IgnoreRecentLogins" disabled="@(StateService.IsRunning || isInitializing)" />
+                        Ignore recent logins (data movement)
+                    </label>
+                    <input type="number" @bind="Config.RecentLoginThresholdMinutes" min="1" max="1440" 
+                           style="width: 70px;" disabled="@(StateService.IsRunning || isInitializing || !Config.IgnoreRecentLogins)" 
+                           title="Threshold in minutes" />
+                    <span style="font-size: 0.85rem; color: #666;">min</span>
+                </div>
             </div>
             
             <div style="display: flex; gap: 10px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
@@ -159,11 +169,20 @@
         var totalMatched = matchedCount + matchedOnRetryCount; // Include transient mismatches as "matched"
         
         // Calculate result-based metrics (total individual results that matched vs total results)
-        var totalMatchedResults = resultsSnapshot.Sum(r => r.InBoth.Count);
-        var totalResults = resultsSnapshot.Sum(r => r.InBoth.Count + r.OnlyInControl.Count + r.OnlyInTest.Count);
+        // For effective matches (including matched-on-retry), InBoth/OnlyIn* lists are empty — use ControlCount instead
+        var totalMatchedResults = resultsSnapshot.Sum(r => IsEffectiveMatch(r) ? (r.RetryControlCount ?? r.ControlCount) : r.InBoth.Count);
+        var totalResults = resultsSnapshot.Sum(r => IsEffectiveMatch(r) 
+            ? (r.RetryControlCount ?? r.ControlCount) 
+            : r.InBoth.Count + r.OnlyInControl.Count + r.OnlyInTest.Count);
         
-        // Calculate mismatches by ResultSlotType (with contributing search detail)
-        var mismatchedResults = resultsSnapshot.Where(r => !r.Matched).ToList();
+        // Data movement tracking
+        var totalIgnoredFromControl = resultsSnapshot.Sum(r => r.IgnoredFromControl.Count);
+        var totalIgnoredFromTest = resultsSnapshot.Sum(r => r.IgnoredFromTest.Count);
+        var totalIgnored = totalIgnoredFromControl + totalIgnoredFromTest;
+        var matchedDueToIgnoring = resultsSnapshot.Count(r => IsEffectiveMatch(r) && (r.IgnoredFromControl.Any() || r.IgnoredFromTest.Any()));
+        
+        // Calculate mismatches by ResultSlotType (with contributing search detail) — confirmed only
+        var mismatchedResults = resultsSnapshot.Where(r => !r.Matched && r.RetryMatched != true).ToList();
         var slotTypeBreakdown = new Dictionary<string, int>();
         var slotTypeContributors = new Dictionary<string, List<(ComparisonResult Result, int OnlyControlCount, int OnlyTestCount)>>();
         
@@ -236,6 +255,20 @@
                     <p class="value">@GetSuccessRate(totalMatchedResults, totalResults)%</p>
                     <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">@totalMatchedResults.ToString("N0") / @totalResults.ToString("N0") results</p>
                 </div>
+                @if (totalIgnored > 0)
+                {
+                    <div class="summary-card" style="border-left: 3px solid #ff9800;">
+                        <h3>Ignored (Data Movement)</h3>
+                        <p class="value" style="color: #ff9800;">@totalIgnored</p>
+                        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
+                            @totalIgnoredFromControl from Control, @totalIgnoredFromTest from Test
+                            @if (matchedDueToIgnoring > 0)
+                            {
+                                <br /><span>@matchedDueToIgnoring search(es) became matches</span>
+                            }
+                        </p>
+                    </div>
+                }
             </div>
         </div>
 
@@ -254,7 +287,7 @@
                         <div class="summary-card slot-card @(isSelected ? "slot-card-selected" : "")" 
                              @onclick="@(() => ToggleSlotType(slotKey))"
                              title="Click to see contributing searches">
-                            <h3>@kvp.Key</h3>
+                            <h3>@FormatSlotType(kvp.Key)</h3>
                             <p class="value" style="color: var(--danger-color);">@kvp.Value.ToString("N0")</p>
                             <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">mismatched results</p>
                         </div>
@@ -265,7 +298,7 @@
                 {
                     <div class="slot-detail-panel">
                         <h3 style="margin: 0 0 12px 0; color: var(--primary-color);">
-                            Searches contributing to <strong>@selectedSlotType</strong> mismatches
+                            Searches contributing to <strong>@FormatSlotType(selectedSlotType)</strong> mismatches
                             <span style="font-weight: 400; font-size: 0.85rem; color: #666;"> — @contributors.Count search(es)</span>
                         </h3>
                         <table class="results-table" style="margin-top: 0;">
@@ -297,11 +330,7 @@
                                         <td style="color: var(--danger-color); font-weight: 600;">@c.OnlyControlCount</td>
                                         <td style="color: var(--primary-color); font-weight: 600;">@c.OnlyTestCount</td>
                                         <td>
-                                            @if (c.Result.WasRetried && c.Result.RetryMatched == true)
-                                            {
-                                                <span class="badge badge-warning">⚠️ Transient</span>
-                                            }
-                                            else if (c.Result.WasRetried && c.Result.RetryMatched == false)
+                                            @if (c.Result.WasRetried && c.Result.RetryMatched == false)
                                             {
                                                 <span class="badge badge-danger">🔁 Confirmed</span>
                                             }
@@ -350,28 +379,38 @@
             {
                 @foreach (var serviceGroup in GetFilteredGroupedByService())
                 {
-                    var total = serviceGroup.Count();
-                    var matched = serviceGroup.Count(r => r.Matched);
-                    var mismatched = total - matched;
+                    var displayed = serviceGroup.Count();
+                    var allForService = StateService.Results.Where(r => r.SearchServiceName == serviceGroup.Key);
+                    var serviceMatched = allForService.Count(r => IsEffectiveMatch(r));
+                    var serviceMismatched = allForService.Count(r => !IsEffectiveMatch(r));
 
                     <div style="margin-bottom: 30px;">
                         <h3 style="color: var(--primary-color); margin-bottom: 15px;">
-                            🔍 @serviceGroup.Key - 
-                            <span style="color: var(--success-color);">@matched matched</span> / 
-                            <span style="color: var(--danger-color);">@mismatched mismatched</span>
+                            🔍 @serviceGroup.Key — 
+                            <span style="color: var(--success-color);">@serviceMatched matched</span> / 
+                            <span style="color: var(--danger-color);">@serviceMismatched mismatched</span>
+                            @if (filterStatus != "all")
+                            {
+                                <span style="color: #888; font-size: 0.85rem; font-weight: normal;">(showing @displayed @filterStatus below)</span>
+                            }
                         </h3>
                         
                         @foreach (var siteGroup in serviceGroup.GroupBy(r => r.SiteCode).OrderBy(g => g.Key))
                         {
-                            var siteTotal = siteGroup.Count();
-                            var siteMatched = siteGroup.Count(r => r.Matched);
-                            var siteMismatched = siteTotal - siteMatched;
+                            var siteDisplayed = siteGroup.Count();
+                            var allForServiceSite = StateService.Results.Where(r => r.SearchServiceName == serviceGroup.Key && r.SiteCode == siteGroup.Key);
+                            var siteMatchedTotal = allForServiceSite.Count(r => IsEffectiveMatch(r));
+                            var siteMismatchedTotal = allForServiceSite.Count(r => !IsEffectiveMatch(r));
 
                             <div style="margin-left: 20px; margin-bottom: 20px;">
                                 <h4 style="color: #666; margin-bottom: 10px; font-size: 1rem;">
-                                    📍 SiteCode: @siteGroup.Key - 
-                                    <span style="color: var(--success-color);">@siteMatched matched</span> / 
-                                    <span style="color: var(--danger-color);">@siteMismatched mismatched</span>
+                                    📍 SiteCode: @siteGroup.Key — 
+                                    <span style="color: var(--success-color);">@siteMatchedTotal matched</span> / 
+                                    <span style="color: var(--danger-color);">@siteMismatchedTotal mismatched</span>
+                                    @if (filterStatus != "all")
+                                    {
+                                        <span style="color: #888; font-size: 0.8rem; font-weight: normal;">(showing @siteDisplayed)</span>
+                                    }
                                 </h4>
                                 
                                 <table class="results-table">
@@ -386,7 +425,7 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        @foreach (var result in siteGroup.OrderBy(r => r.Matched).ThenBy(r => r.SearcherUserId))
+                                        @foreach (var result in siteGroup.OrderBy(r => IsEffectiveMatch(r)).ThenBy(r => r.SearcherUserId))
                                         {
                                             <tr>
                                                 <td>
@@ -394,9 +433,9 @@
                                                     {
                                                         <span class="badge badge-success">✓ Match</span>
                                                     }
-                                                    else if (result.WasRetried && result.RetryMatched == true)
+                                                    else if (result.RetryMatched == true)
                                                     {
-                                                        <span class="badge badge-warning" title="Mismatch on first run, but matched on retry - likely transient">⚠️ Matched on Retry</span>
+                                                        <span class="badge badge-success" title="Mismatch on first run, but matched on retry - transient">✓ Match <span style="font-size: 0.75rem;">(on retry)</span></span>
                                                     }
                                                     else
                                                     {
@@ -431,7 +470,7 @@
                                                     }
                                                 </td>
                                                 <td style="font-family: monospace; font-size: 0.85rem;">
-                                                    @if (!result.Matched && result.RetryMatched == false)
+                                                    @if (!IsEffectiveMatch(result) && result.RetryMatched == false)
                                                     {
                                                         <div style="display: flex; flex-direction: column; gap: 4px;">
                                                             <a href="http://@Config.MrSixControl:8888/admin/getExplain?callid=@result.ControlCallId" 
@@ -454,30 +493,60 @@
                                                     }
                                                 </td>
                                                 <td>
-                                                    @if (!result.Matched)
+                                                    @if (!IsEffectiveMatch(result))
                                                     {
                                                         <div class="diff-details">
                                                             @if (result.OnlyInControl.Any())
                                                             {
                                                                 <div class="diff-section">
                                                                     <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count):</strong>
-                                                                    <span>@string.Join(", ", result.OnlyInControl.Take(10))@(result.OnlyInControl.Count > 10 ? "..." : "")</span>
+                                                                    <span>@RenderUserIdLinks(result.OnlyInControl)</span>
                                                                 </div>
                                                             }
                                                             @if (result.OnlyInTest.Any())
                                                             {
                                                                 <div class="diff-section">
                                                                     <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count):</strong>
-                                                                    <span>@string.Join(", ", result.OnlyInTest.Take(10))@(result.OnlyInTest.Count > 10 ? "..." : "")</span>
+                                                                    <span>@RenderUserIdLinks(result.OnlyInTest)</span>
                                                                 </div>
                                                             }
                                                             @if (result.InBoth.Any())
                                                             {
                                                                 <div class="diff-section">
                                                                     <strong style="color: var(--success-color);">In Both (@result.InBoth.Count):</strong>
-                                                                    <span>@string.Join(", ", result.InBoth.Take(10))@(result.InBoth.Count > 10 ? "..." : "")</span>
+                                                                    <span>@RenderUserIdLinks(result.InBoth)</span>
                                                                 </div>
                                                             }
+                                                            @if (result.IgnoredFromControl.Any() || result.IgnoredFromTest.Any())
+                                                            {
+                                                                <div class="diff-section" style="opacity: 0.7;">
+                                                                    <strong style="color: #ff9800;">Ignored - Data Movement (@(result.IgnoredFromControl.Count + result.IgnoredFromTest.Count)):</strong>
+                                                                    @if (result.IgnoredFromControl.Any())
+                                                                    {
+                                                                        <span> Control: @RenderUserIdLinks(result.IgnoredFromControl)</span>
+                                                                    }
+                                                                    @if (result.IgnoredFromTest.Any())
+                                                                    {
+                                                                        <span> Test: @RenderUserIdLinks(result.IgnoredFromTest)</span>
+                                                                    }
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    else if (result.IgnoredFromControl.Any() || result.IgnoredFromTest.Any())
+                                                    {
+                                                        <div class="diff-details" style="opacity: 0.7;">
+                                                            <div class="diff-section">
+                                                                <strong style="color: #ff9800;">Ignored - Data Movement (@(result.IgnoredFromControl.Count + result.IgnoredFromTest.Count)):</strong>
+                                                                @if (result.IgnoredFromControl.Any())
+                                                                {
+                                                                    <span> Control: @RenderUserIdLinks(result.IgnoredFromControl)</span>
+                                                                }
+                                                                @if (result.IgnoredFromTest.Any())
+                                                                {
+                                                                    <span> Test: @RenderUserIdLinks(result.IgnoredFromTest)</span>
+                                                                }
+                                                            </div>
                                                         </div>
                                                     }
                                                     else
@@ -498,15 +567,20 @@
             {
                 @foreach (var siteGroup in GetFilteredGroupedBySiteCode())
                 {
-                    var total = siteGroup.Count();
-                    var matched = siteGroup.Count(r => r.Matched);
-                    var mismatched = total - matched;
+                    var displayed = siteGroup.Count();
+                    var allForSite = StateService.Results.Where(r => r.SiteCode == siteGroup.Key);
+                    var siteMatchedTotal = allForSite.Count(r => IsEffectiveMatch(r));
+                    var siteMismatchedTotal = allForSite.Count(r => !IsEffectiveMatch(r));
 
                     <div style="margin-bottom: 30px;">
                         <h3 style="color: var(--primary-color); margin-bottom: 15px;">
-                            📍 SiteCode: @siteGroup.Key - 
-                            <span style="color: var(--success-color);">@matched matched</span> / 
-                            <span style="color: var(--danger-color);">@mismatched mismatched</span>
+                            📍 SiteCode: @siteGroup.Key — 
+                            <span style="color: var(--success-color);">@siteMatchedTotal matched</span> / 
+                            <span style="color: var(--danger-color);">@siteMismatchedTotal mismatched</span>
+                            @if (filterStatus != "all")
+                            {
+                                <span style="color: #888; font-size: 0.85rem; font-weight: normal;">(showing @displayed @filterStatus below)</span>
+                            }
                         </h3>
                         
                         <table class="results-table">
@@ -522,7 +596,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach (var result in siteGroup.OrderBy(r => r.Matched).ThenBy(r => r.SearcherUserId))
+                                @foreach (var result in siteGroup.OrderBy(r => IsEffectiveMatch(r)).ThenBy(r => r.SearcherUserId))
                                 {
                                     <tr>
                                         <td>
@@ -530,9 +604,9 @@
                                             {
                                                 <span class="badge badge-success">✓ Match</span>
                                             }
-                                            else if (result.WasRetried && result.RetryMatched == true)
+                                            else if (result.RetryMatched == true)
                                             {
-                                                <span class="badge badge-warning" title="Mismatch on first run, but matched on retry - likely transient">⚠️ Matched on Retry</span>
+                                                <span class="badge badge-success" title="Mismatch on first run, but matched on retry - transient">✓ Match <span style="font-size: 0.75rem;">(on retry)</span></span>
                                             }
                                             else
                                             {
@@ -568,7 +642,7 @@
                                             }
                                         </td>
                                         <td style="font-family: monospace; font-size: 0.85rem;">
-                                            @if (!result.Matched && result.RetryMatched == false)
+                                            @if (!IsEffectiveMatch(result) && result.RetryMatched == false)
                                             {
                                                 <div style="display: flex; flex-direction: column; gap: 4px;">
                                                     <a href="http://@Config.MrSixControl:8888/admin/getExplain?callid=@result.ControlCallId" 
@@ -591,30 +665,60 @@
                                             }
                                         </td>
                                         <td>
-                                            @if (!result.Matched)
+                                            @if (!IsEffectiveMatch(result))
                                             {
                                                 <div class="diff-details">
                                                     @if (result.OnlyInControl.Any())
                                                     {
                                                         <div class="diff-section">
                                                             <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count):</strong>
-                                                            <span>@string.Join(", ", result.OnlyInControl.Take(10))@(result.OnlyInControl.Count > 10 ? "..." : "")</span>
+                                                            <span>@RenderUserIdLinks(result.OnlyInControl)</span>
                                                         </div>
                                                     }
                                                     @if (result.OnlyInTest.Any())
                                                     {
                                                         <div class="diff-section">
                                                             <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count):</strong>
-                                                            <span>@string.Join(", ", result.OnlyInTest.Take(10))@(result.OnlyInTest.Count > 10 ? "..." : "")</span>
+                                                            <span>@RenderUserIdLinks(result.OnlyInTest)</span>
                                                         </div>
                                                     }
                                                     @if (result.InBoth.Any())
                                                     {
                                                         <div class="diff-section">
                                                             <strong style="color: var(--success-color);">In Both (@result.InBoth.Count):</strong>
-                                                            <span>@string.Join(", ", result.InBoth.Take(10))@(result.InBoth.Count > 10 ? "..." : "")</span>
+                                                            <span>@RenderUserIdLinks(result.InBoth)</span>
                                                         </div>
                                                     }
+                                                    @if (result.IgnoredFromControl.Any() || result.IgnoredFromTest.Any())
+                                                    {
+                                                        <div class="diff-section" style="opacity: 0.7;">
+                                                            <strong style="color: #ff9800;">Ignored - Data Movement (@(result.IgnoredFromControl.Count + result.IgnoredFromTest.Count)):</strong>
+                                                            @if (result.IgnoredFromControl.Any())
+                                                            {
+                                                                <span> Control: @RenderUserIdLinks(result.IgnoredFromControl)</span>
+                                                            }
+                                                            @if (result.IgnoredFromTest.Any())
+                                                            {
+                                                                <span> Test: @RenderUserIdLinks(result.IgnoredFromTest)</span>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                            else if (result.IgnoredFromControl.Any() || result.IgnoredFromTest.Any())
+                                            {
+                                                <div class="diff-details" style="opacity: 0.7;">
+                                                    <div class="diff-section">
+                                                        <strong style="color: #ff9800;">Ignored - Data Movement (@(result.IgnoredFromControl.Count + result.IgnoredFromTest.Count)):</strong>
+                                                        @if (result.IgnoredFromControl.Any())
+                                                        {
+                                                            <span> Control: @RenderUserIdLinks(result.IgnoredFromControl)</span>
+                                                        }
+                                                        @if (result.IgnoredFromTest.Any())
+                                                        {
+                                                            <span> Test: @RenderUserIdLinks(result.IgnoredFromTest)</span>
+                                                        }
+                                                    </div>
                                                 </div>
                                             }
                                             else
@@ -877,6 +981,21 @@
         return (double)StateService.Current / StateService.Total * 100;
     }
 
+    private MarkupString RenderUserIdLinks(List<int> userIds, int max = 10)
+    {
+        var links = userIds.Take(max).Select(id =>
+            $"<a href=\"https://kraken.i.mct360.com/six/UserInfo/{id}/{Config.MrSixControl},{Config.MrSixTest}\" target=\"_blank\" style=\"color: inherit; text-decoration: underline dotted; text-underline-offset: 2px;\" title=\"View {id} in Kraken\">{id}</a>");
+        var result = string.Join(", ", links);
+        if (userIds.Count > max)
+            result += "...";
+        return new MarkupString(result);
+    }
+
+    /// <summary>
+    /// A result is effectively matched if it matched outright, or if it matched on retry (transient).
+    /// </summary>
+    private static bool IsEffectiveMatch(ComparisonResult r) => r.Matched || r.RetryMatched == true;
+
     private string GetSuccessRate(int matchedCount, int totalCount)
     {
         if (totalCount == 0) return "0.0";
@@ -891,9 +1010,9 @@
 
         // Apply status filter
         if (filterStatus == "matched")
-            filtered = filtered.Where(r => r.Matched);
+            filtered = filtered.Where(r => IsEffectiveMatch(r));
         else if (filterStatus == "mismatched")
-            filtered = filtered.Where(r => !r.Matched);
+            filtered = filtered.Where(r => !IsEffectiveMatch(r));
 
         // Apply text filter
         if (!string.IsNullOrWhiteSpace(filterText))
@@ -913,9 +1032,9 @@
 
         // Apply status filter
         if (filterStatus == "matched")
-            filtered = filtered.Where(r => r.Matched);
+            filtered = filtered.Where(r => IsEffectiveMatch(r));
         else if (filterStatus == "mismatched")
-            filtered = filtered.Where(r => !r.Matched);
+            filtered = filtered.Where(r => !IsEffectiveMatch(r));
 
         // Apply text filter
         if (!string.IsNullOrWhiteSpace(filterText))
@@ -926,6 +1045,91 @@
         }
 
         return filtered.GroupBy(r => r.SiteCode).OrderBy(g => g.Key);
+    }
+
+    private static readonly Dictionary<int, string> AlgoIdNames = new()
+    {
+        [0] = "Default", [1] = "Yml", [2] = "Mlt", [3] = "TopSpotPaid", [4] = "TopSpotGifted",
+        [5] = "VenusBackfill0", [6] = "VenusBackfill1", [7] = "VenusBackfill2", [8] = "VenusBackfill3",
+        [9] = "VenusBackfill4", [10] = "VenusBackfill5", [11] = "VenusBackfill6", [12] = "VenusBackfill7",
+        [13] = "VenusBackfill8", [14] = "VenusBackfill9", [15] = "VenusBackfill10",
+        [140] = "ExpertLikedMe", [141] = "ExpertMLMutualMatches", [142] = "ExpertTriangulationByEmailResponses",
+        [143] = "ExpertTriangulationByEmail", [144] = "ExpertTriangulationByLikes",
+        [145] = "ExpertAmarnathBoratWithCap", [146] = "ExpertMutualMatch151",
+        [147] = "ExpertNotUsedYet1", [148] = "ExpertNotUsedYet2", [149] = "ExpertNotUsedYet3",
+        [150] = "MbuTriangulationByEmailResponses", [151] = "MbuTriangulationByEmail",
+        [152] = "MbuTriangulationByLikes", [153] = "MbuAmarnathBoratWithCap", [154] = "MbuMutualMatch151",
+        [155] = "MbuMorePie", [156] = "ReactivationJfy", [157] = "ReactivationMp", [158] = "ReactivationOp",
+        [165] = "WowSearchNewMember", [166] = "WowSearchPopular",
+        [171] = "VenusTriangulation171", [172] = "MM172", [174] = "MMsearch174",
+        [175] = "SingledOut175", [176] = "SingledOut176", [177] = "MMbanding177",
+        [179] = "ML179", [180] = "FirstSetOfJfy", [181] = "FirstSetOfMp", [182] = "MLMutualMatches",
+        [183] = "LitTwoWay", [184] = "PtrMp",
+        [190] = "LitTriangulationByEmail", [191] = "LitTriangulationByLikes",
+        [192] = "LitTriangulationByEmailResponses", [193] = "LitMorePie",
+        [194] = "LitRelationshipIntent", [195] = "LitCoreValue", [196] = "LitCurrentSubs",
+        [197] = "LitAffinity", [198] = "LitMeeticPopular", [199] = "LitMeeticRelevant",
+        [200] = "VenusJfy171Email", [201] = "VenusJfy171Likes", [251] = "VenusJfySeeds",
+        [204] = "BatchSearch", [205] = "FlyBy", [206] = "G3Spotlight", [207] = "NewMembers",
+        [208] = "OneWay", [209] = "OneWayApi", [210] = "Reverse", [211] = "Keyword",
+        [212] = "TopSpotBackfill", [213] = "TwoWay", [214] = "MakeMatchesJfy", [215] = "MakeMatchesMp",
+        [216] = "PriorityLikeResultAlgoId",
+        [272] = "LikedMeInMatchPicks", [273] = "LikedMeInJustForYou", [274] = "LikedMeInYouMightLike",
+        [275] = "SuperLikeInMatchPicks", [276] = "SuperLikeInJustForYou", [277] = "SuperLikeInYouMightLike",
+        [278] = "MorePieJfy", [279] = "MorePieMp", [280] = "MorePieOneP",
+        [300] = "MpV2Mlt", [301] = "MpV2175", [302] = "MpV2171Email", [303] = "MpV2171Likes",
+        [371] = "VenusTriangulation171FpV3", [372] = "MM172FpV3", [374] = "MMsearch174FpV3",
+        [375] = "SingledOut175FpV3", [376] = "SingledOut176FpV3", [377] = "MMbanding177FpV3",
+        [379] = "ML179FpV3", [380] = "FirstSetOfJfyFpV3", [381] = "FirstSetOfMpFpV3",
+        [382] = "LikedMeInJustForYouFpV3", [383] = "SuperLikeInJustForYouFpV3",
+        [384] = "LikedMeInMatchPickesFpV3", [385] = "SuperLikeInMatchPickesFpV3",
+        [386] = "EuclidDistanceMp", [387] = "EuclidDistanceJfy",
+        [388] = "EuclidDistanceMpFpV3", [389] = "EuclidDistanceJfyFpV3",
+        [400] = "HomeTown", [401] = "College", [402] = "CollegeHomeTown",
+        [403] = "MeetIrl", [404] = "StickerSearch",
+        [500] = "StackCoreRecent", [501] = "StackCoreAll", [502] = "StackNewUsers",
+        [503] = "StackReactivation", [504] = "StackPop180", [505] = "StackSuperLiked",
+        [506] = "StackLikedMe", [507] = "StackNewUserLikedMe",
+        [508] = "StackTopSpotPaid", [509] = "StackTopSpotGifted",
+        [510] = "StackCoreSixty", [511] = "StackPriorityLiked", [512] = "StackPtr",
+        [513] = "StackMorePie", [514] = "StackLikeTri", [515] = "StackEmailTri",
+        [516] = "StackEmailResponseTri", [517] = "StackTriangulation",
+        [518] = "StackCoreNinety", [519] = "StackMorePieSubs", [520] = "StackMorePieTerms",
+        [521] = "StackCoreThree", [522] = "StackCoreThirty",
+        [530] = "StackCoreRecentPreferred", [531] = "StackCoreAllPreferred",
+        [532] = "StackNewUsersPreferred", [533] = "StackReactivationPreferred",
+        [534] = "StackPop180Preferred", [535] = "StackSuperLikedPreferred",
+        [536] = "StackLikedMePreferred", [537] = "StackNewUserLikedMePreferred",
+        [538] = "StackTopSpotPaidPreferred", [539] = "StackTopSpotGiftedPreferred",
+        [540] = "StackPriorityLikedPreferred",
+        [544] = "StackLikeTriPreferred", [545] = "StackEmailTriPreferred",
+        [546] = "StackEmailResponseTriPreferred", [547] = "StackTriangulationPreferred",
+        [600] = "MlExperimentMin", [601] = "MlExperimentTwoTowersReranking", [699] = "MlExperimentMax",
+        [700] = "StackV2CoreRecent", [701] = "StackV2CoreAll", [702] = "StackV2NewUsers",
+        [703] = "StackV2Reactivation", [704] = "StackV2Pop180", [705] = "StackV2SuperLiked",
+        [706] = "StackV2LikedMe", [707] = "StackV2NewUserLikedMe",
+        [708] = "StackV2TopSpotPaid", [709] = "StackV2TopSpotGifted",
+        [710] = "StackV2CoreSixty", [711] = "StackV2PriorityLiked", [712] = "StackV2Ptr",
+        [713] = "StackV2MorePie", [714] = "StackV2LikeTri", [715] = "StackV2EmailTri",
+        [716] = "StackV2EmailResponseTri", [717] = "StackV2Triangulation",
+        [718] = "StackV2CoreNinety", [719] = "StackV2MorePieSubs", [720] = "StackV2MorePieTerms",
+        [721] = "StackV2CoreThree", [722] = "StackV2CoreThirty",
+        [723] = "StackV2Online", [724] = "StackV2Reborn", [725] = "StackV2RegInHours",
+        [1000] = "UNSPECIFIED", [1001] = "RELEVANCE", [1002] = "POPULAR", [1003] = "MESSAGERS",
+        [1004] = "SPOTLIGHT", [1005] = "BACKFILL", [1006] = "SPECIAL_EVENT",
+        [1007] = "VITALITY_BOOST", [1008] = "LEGACY", [1009] = "NEW_USERS",
+        [1010] = "LIKERS", [1011] = "LOW_ATTENTION", [1012] = "STACK_POPULARITY",
+        [1013] = "STACK_ONLINE_NOW_POPULARITY", [1014] = "STACK_ONLINE_NOW_RELEVANCE",
+        [1015] = "STACK_NEW_FACES_POPULARITY", [1016] = "STACK_MOST_QUESTIONS",
+        [1017] = "STACK_NEARBY", [1018] = "STACK_ONLINE_NOW_VITALITY_BOOST",
+        [1019] = "STACK_TOP_MATCHES", [1020] = "RANDOM_CURATED", [1021] = "RANDOM_PURE"
+    };
+
+    private string FormatSlotType(string slotTypeKey)
+    {
+        if (int.TryParse(slotTypeKey, out var id) && AlgoIdNames.TryGetValue(id, out var name))
+            return $"{name} ({id})";
+        return slotTypeKey;
     }
 
     public void Dispose()

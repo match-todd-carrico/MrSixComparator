@@ -34,4 +34,11 @@ public class AppConfiguration
     
     // Auto-retry mismatched comparisons to verify repeatability
     public bool AutoRetryMismatches { get; set; } = true;
+    
+    // Ignore results where missing users have a LastLoginDate within the threshold
+    // These are likely data movement artifacts from eventually consistent data model
+    public bool IgnoreRecentLogins { get; set; } = true;
+    
+    // How many minutes back to consider a LastLoginDate as "recent" (default: 60 = 1 hour)
+    public int RecentLoginThresholdMinutes { get; set; } = 60;
 }
