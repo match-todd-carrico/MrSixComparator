@@ -230,6 +230,50 @@ dotnet test
 - Presenting results to stakeholders
 - Want to see results grouped by service or site
 
+## 🔍 Troubleshooting & Diagnostics
+
+### Shard 4 Reverse Search Issues
+
+If you're experiencing inaccurate comparisons specifically with **Shard 4 Reverse searches**, we've created comprehensive diagnostic resources:
+
+#### Quick Start
+📋 **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Fast 5-minute guide to identify and fix the issue
+
+#### Detailed Investigation
+📊 **[INVESTIGATION_SUMMARY.md](INVESTIGATION_SUMMARY.md)** - Complete analysis of the root cause and fixes
+
+#### Diagnostic Tools
+🔧 **[SHARD4_DIAGNOSTIC.md](SHARD4_DIAGNOSTIC.md)** - Step-by-step troubleshooting guide  
+💾 **[DiagnosticQueries.sql](DiagnosticQueries.sql)** - Database queries to investigate shard 4 issues
+
+#### Key Issue
+The `ReverseService` is missing the `OtherUserId` parameter in `ReverseArgs` constructor, which causes:
+- Inconsistent results between Control and Test environments
+- Non-deterministic user ID selection
+- Higher mismatch rates on certain shards (particularly shard 4)
+
+**Solution**: Pass `otherUserId: searcher.OtherUserId` to the `ReverseArgs` constructor in `ReverseService.cs`
+
+### General Troubleshooting
+
+**Comparison Fails:**
+1. Check server accessibility (ping servers)
+2. Verify SQL connection string in `AppConfiguration.cs`
+3. Ensure database permissions for SearchData
+4. Review logs in `logs/` folder
+
+**No Parameters Loading:**
+1. Verify connection string
+2. Check ShardId validation
+3. Ensure servers are on same shard
+4. Run diagnostic queries from `DiagnosticQueries.sql`
+
+**Mismatches on Specific Shards:**
+1. Check `SHARD4_DIAGNOSTIC.md` for shard-specific issues
+2. Review enhanced logging output for diagnostic messages
+3. Compare server configurations
+4. Run shard-specific diagnostic queries
+
 ## 🤝 Contributing
 
 The code is well-structured for extensibility:
