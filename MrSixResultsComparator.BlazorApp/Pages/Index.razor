@@ -3,7 +3,9 @@
 @using MrSixResultsComparator.Core.Services
 @using MrSixResultsComparator.Core.Models
 @using MrSixResultsComparator.BlazorApp.Data
+@using MrSixResultsComparator.BlazorApp.Pages
 @inject AppConfiguration Config
+@inject MrSixAdminControlService AdminControlService
 @inject MrSixContextService ContextService
 @inject ShardValidationService ShardValidationService
 @inject SearchParameterService SearchParameterService
@@ -30,109 +32,348 @@
 </div>
 
 
+<style>
+    .config-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+    }
+
+    .admin-banner {
+        padding: 10px 12px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+    }
+
+    .admin-banner-success {
+        background: #e8f5e9;
+        border: 1px solid #66bb6a;
+    }
+
+    .admin-banner-error {
+        background: #ffebee;
+        border: 1px solid #ef5350;
+    }
+
+    .server-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .server-card {
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 10px;
+    }
+
+    .config-tight-group {
+        margin-bottom: 6px;
+    }
+
+    .server-host {
+        padding: 6px 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f8fafc;
+        font-family: monospace;
+    }
+
+    .server-meta-line {
+        font-size: 0.9rem;
+    }
+
+    .server-meta-sep {
+        color: #94a3b8;
+        margin: 0 6px;
+    }
+
+    .admin-actions-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .config-inline-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 0;
+    }
+
+    .config-inline-label {
+        margin: 0;
+        font-weight: 500;
+        font-size: 0.9rem;
+        white-space: nowrap;
+    }
+
+    .config-inline-input,
+    .config-inline-select {
+        padding: 8px 12px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        font-size: 0.95rem;
+        background: #fff;
+    }
+
+    .config-inline-input:focus,
+    .config-inline-select:focus {
+        outline: none;
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.1);
+    }
+
+    .config-tabs {
+        display: flex;
+        gap: 6px;
+        margin-bottom: 12px;
+        border-bottom: 1px solid #dbe2ea;
+    }
+
+    .config-tab-button {
+        border: 1px solid #dbe2ea;
+        border-bottom: none;
+        background: #eef2f7;
+        color: #334155;
+        padding: 6px 12px;
+        border-radius: 6px 6px 0 0;
+        font-weight: 500;
+        cursor: pointer;
+    }
+
+    .config-tab-button.active {
+        background: #fff;
+        color: #0f172a;
+    }
+
+    .config-ignore-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+    }
+
+    .config-ignore-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0;
+        white-space: nowrap;
+    }
+
+    @@media (max-width: 900px) {
+        .server-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
 <div class="container">
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
-        <div class="card">
-            <h2>Configuration</h2>
-            <div class="config-grid" style="grid-template-columns: 1fr;">
-                <div class="form-group">
-                    <label>Control Server</label>
-                    <input type="text" @bind="Config.MrSixControl" disabled="@(StateService.IsRunning || isInitializing)" />
-                </div>
-                <div class="form-group">
-                    <label>Test Server</label>
-                    <input type="text" @bind="Config.MrSixTest" disabled="@(StateService.IsRunning || isInitializing)" />
-                </div>
-                <div class="form-group">
-                    <label>Max Parallelism</label>
-                    <input type="number" @bind="Config.MaxParallelism" min="1" max="20" disabled="@(StateService.IsRunning || isInitializing)" />
-                </div>
-                <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
-                    <label style="margin: 0;">
-                        <input type="checkbox" @bind="Config.IgnoreRecentLogins" disabled="@(StateService.IsRunning || isInitializing)" />
-                        Ignore recent logins (data movement)
-                    </label>
-                    <input type="number" @bind="Config.RecentLoginThresholdMinutes" min="1" max="1440" 
-                           style="width: 70px;" disabled="@(StateService.IsRunning || isInitializing || !Config.IgnoreRecentLogins)" 
-                           title="Threshold in minutes" />
-                    <span style="font-size: 0.85rem; color: #666;">min</span>
-                </div>
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="config-header-row">
+            <h2 style="margin: 0;">Configuration</h2>
+            <button class="btn btn-secondary" @onclick="RefreshAdminState" disabled="@isAdminBusy">
+                @(isAdminBusy ? "⏳ Working..." : "🔄 Refresh Server Status")
+            </button>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(adminMessage))
+        {
+            <div class="admin-banner admin-banner-success">
+                @adminMessage
             </div>
-            
-            <div style="display: flex; gap: 10px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
-                <button class="btn btn-primary" @onclick="StartComparison" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
-                    @if (isInitializing)
-                    {
-                        <span>⏳ Loading...</span>
-                    }
-                    else if (StateService.IsRunning)
-                    {
-                        <span>⏳ Running...</span>
-                    }
-                    else
-                    {
-                        <span>▶️ Start Comparison</span>
-                    }
-                </button>
-                @if (StateService.IsRunning || isInitializing)
-                {
-                    <button class="btn btn-danger" @onclick="CancelComparison">
-                        ⛔ Cancel
-                    </button>
-                }
-                <button class="btn btn-secondary" @onclick="ClearResults" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
-                    🗑️ Clear Results
-                </button>
-                <button class="btn btn-secondary" @onclick="RefreshSearchParameters" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
-                    @if (isRefreshingParameters)
-                    {
-                        <span>⏳ Refreshing...</span>
-                    }
-                    else
-                    {
-                        <span>🔄 Refresh Parameters</span>
-                    }
-                </button>
-                @if (StateService.CachedSearchParameters != null && StateService.CachedSearchParameters.Any())
-                {
-                    <div style="padding: 8px 12px; background-color: #e8f4fd; border-radius: 4px; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;">
-                        <span><strong>Cached:</strong> @StateService.CachedSearchParameters.Count parameters (ShardId: @StateService.CachedShardId)</span>
-                        <a href="/parameters" style="color: var(--primary-color); text-decoration: none; font-weight: 500;">View →</a>
-                    </div>
-                }
+        }
+        @if (!string.IsNullOrWhiteSpace(adminError))
+        {
+            <div class="admin-banner admin-banner-error">
+                @adminError
             </div>
+        }
+        <div class="config-tabs">
+            <button type="button" class="config-tab-button @(activeConfigTab == "configuration" ? "active" : null)" @onclick='() => activeConfigTab = "configuration"'>
+                Configuration
+            </button>
+            <button type="button" class="config-tab-button @(activeConfigTab == "search-services" ? "active" : null)" @onclick='() => activeConfigTab = "search-services"'>
+                Search Services
+            </button>
         </div>
 
-        <div class="card">
-            <h2>Search Services</h2>
-            <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">Enable or disable search services for the comparison run</p>
-            <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
-                <button class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;" @onclick="EnableAllServices" disabled="@(StateService.IsRunning || isInitializing)">
-                    ✓ Enable All
-                </button>
-                <button class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;" @onclick="DisableAllServices" disabled="@(StateService.IsRunning || isInitializing)">
-                    ✗ Disable All
-                </button>
-            </div>
-            <div class="services-grid" style="grid-template-columns: repeat(2, 1fr); max-height: 280px; overflow-y: auto;">
-                @foreach (var serviceName in GetAllSearchServices())
-                {
-                    var isEnabled = Config.EnabledSearchServices.Contains(serviceName);
-                    <div class="service-toggle">
-                        <label>
-                            <input type="checkbox" 
-                                   checked="@isEnabled" 
-                                   @onchange="@((e) => ToggleService(serviceName, (bool)(e.Value ?? false)))"
-                                   disabled="@(StateService.IsRunning || isInitializing)" />
-                            <span class="@(isEnabled ? "service-enabled" : "service-disabled")">@serviceName</span>
-                        </label>
+        @if (activeConfigTab == "configuration")
+        {
+        <div class="config-grid" style="grid-template-columns: 1fr; gap: 12px;">
+            <div class="server-grid">
+                <div class="server-card">
+                    <div class="form-group config-tight-group">
+                        <label>Control Server</label>
+                        <div class="server-host">
+                            @Config.MrSixControl
+                        </div>
                     </div>
-                }
+                    @if (controlAdminState is not null)
+                    {
+                        @if (!string.IsNullOrWhiteSpace(controlAdminState.Error))
+                        {
+                            <div style="color: #c62828; font-weight: 500;">@controlAdminState.Error</div>
+                        }
+                        else
+                        {
+                            <div class="server-meta-line">
+                                <strong>Shard:</strong> @(controlAdminState.ShardId ?? "(not set)")
+                                <span class="server-meta-sep">|</span>
+                                <strong>Runtime:</strong> @GetRuntimeStatus(controlAdminState)
+                                <span class="server-meta-sep">|</span>
+                                <strong>Readiness:</strong> <span style="@GetReadinessStyle(controlAdminState.Readiness)">@controlAdminState.Readiness</span>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="server-card">
+                    <div class="form-group config-tight-group">
+                        <label>Test Server</label>
+                        <div class="server-host">
+                            @Config.MrSixTest
+                        </div>
+                    </div>
+                    @if (testAdminState is not null)
+                    {
+                        @if (!string.IsNullOrWhiteSpace(testAdminState.Error))
+                        {
+                            <div style="color: #c62828; font-weight: 500;">@testAdminState.Error</div>
+                        }
+                        else
+                        {
+                            <div class="server-meta-line">
+                                <strong>Shard:</strong> @(testAdminState.ShardId ?? "(not set)")
+                                <span class="server-meta-sep">|</span>
+                                <strong>Runtime:</strong> @GetRuntimeStatus(testAdminState)
+                                <span class="server-meta-sep">|</span>
+                                <strong>Readiness:</strong> <span style="@GetReadinessStyle(testAdminState.Readiness)">@testAdminState.Readiness</span>
+                            </div>
+                        }
+                    }
+                </div>
             </div>
-            <div style="margin-top: 10px; padding: 10px; background-color: #f0f0f0; border-radius: 4px;">
-                <strong>Enabled:</strong> @Config.EnabledSearchServices.Count of @GetAllSearchServices().Count
+            <div class="admin-actions-row">
+                <label style="font-weight: 500; align-self: center;">Set ShardId:</label>
+                <select class="config-inline-select" @bind="selectedShardId" disabled="@isAdminBusy">
+                    @for (var i = 0; i <= 4; i++)
+                    {
+                        <option value="@i">@i</option>
+                    }
+                </select>
+                <button class="btn btn-primary" @onclick="SetShardControl" disabled="@isAdminBusy">Set Control</button>
+                <button class="btn btn-primary" @onclick="SetShardTest" disabled="@isAdminBusy">Set Test</button>
+                <button class="btn btn-primary" @onclick="SetShardBoth" disabled="@isAdminBusy">Set Both</button>
+            </div>
+            <div class="admin-actions-row">
+                <label style="font-weight: 500;">Restart Match.MrSix:</label>
+                <button class="btn btn-danger" @onclick="RestartControl" disabled="@isAdminBusy">Restart Control</button>
+                <button class="btn btn-danger" @onclick="RestartTest" disabled="@isAdminBusy">Restart Test</button>
+                <button class="btn btn-danger" @onclick="RestartBoth" disabled="@isAdminBusy">Restart Both</button>
+            </div>
+            <div class="config-inline-row">
+                <label class="config-inline-label">Max Parallelism</label>
+                <input class="config-inline-input" type="number" @bind="Config.MaxParallelism" min="1" max="20" style="width: 90px;" disabled="@(StateService.IsRunning || isInitializing)" />
+            </div>
+            <div class="config-inline-row config-ignore-row">
+                <label class="config-ignore-label config-inline-label">
+                    <input type="checkbox" @bind="Config.IgnoreRecentLogins" disabled="@(StateService.IsRunning || isInitializing)" />
+                    Ignore recent logins (data movement)
+                </label>
+                <input class="config-inline-input" type="number" @bind="Config.RecentLoginThresholdMinutes" min="1" max="1440"
+                       style="width: 70px;" disabled="@(StateService.IsRunning || isInitializing || !Config.IgnoreRecentLogins)"
+                       title="Threshold in minutes" />
+                <span style="font-size: 0.85rem; color: #666;">min</span>
             </div>
         </div>
+        
+        <div style="display: flex; gap: 10px; margin-top: 15px; align-items: center; flex-wrap: wrap;">
+            <button class="btn btn-primary" @onclick="StartComparison" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters || !isComparisonStartAllowed)">
+                @if (isInitializing)
+                {
+                    <span>⏳ Loading...</span>
+                }
+                else if (StateService.IsRunning)
+                {
+                    <span>⏳ Running...</span>
+                }
+                else
+                {
+                    <span>▶️ Start Comparison</span>
+                }
+            </button>
+            @if (StateService.IsRunning || isInitializing)
+            {
+                <button class="btn btn-danger" @onclick="CancelComparison">
+                    ⛔ Cancel
+                </button>
+            }
+            <button class="btn btn-secondary" @onclick="ClearResults" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
+                🗑️ Clear Results
+            </button>
+            <button class="btn btn-secondary" @onclick="RefreshSearchParameters" disabled="@(StateService.IsRunning || isInitializing || isRefreshingParameters)">
+                @if (isRefreshingParameters)
+                {
+                    <span>⏳ Refreshing...</span>
+                }
+                else
+                {
+                    <span>🔄 Refresh Parameters</span>
+                }
+            </button>
+            @if (StateService.CachedSearchParameters != null && StateService.CachedSearchParameters.Any())
+            {
+                <div style="padding: 8px 12px; background-color: #e8f4fd; border-radius: 4px; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;">
+                    <span><strong>Cached:</strong> @StateService.CachedSearchParameters.Count parameters (ShardId: @StateService.CachedShardId)</span>
+                    <a href="/parameters" style="color: var(--primary-color); text-decoration: none; font-weight: 500;">View →</a>
+                </div>
+            }
+            @if (!isComparisonStartAllowed && !StateService.IsRunning && !isInitializing)
+            {
+                <span style="color: #b45309; font-size: 0.85rem;">
+                    Start disabled until both Control and Test readiness are <strong>Ready</strong>.
+                </span>
+            }
+        </div>
+        }
+        else
+        {
+        <h3 style="margin: 0 0 10px 0;">Search Services</h3>
+        <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">Enable or disable search services for the comparison run</p>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+            <button class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;" @onclick="EnableAllServices" disabled="@(StateService.IsRunning || isInitializing)">
+                ✓ Enable All
+            </button>
+            <button class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;" @onclick="DisableAllServices" disabled="@(StateService.IsRunning || isInitializing)">
+                ✗ Disable All
+            </button>
+        </div>
+        <div class="services-grid" style="grid-template-columns: repeat(2, 1fr); max-height: 280px; overflow-y: auto;">
+            @foreach (var serviceName in GetAllSearchServices())
+            {
+                var isEnabled = Config.EnabledSearchServices.Contains(serviceName);
+                <div class="service-toggle">
+                    <label>
+                        <input type="checkbox" 
+                               checked="@isEnabled" 
+                               @onchange="@((e) => ToggleService(serviceName, (bool)(e.Value ?? false)))"
+                               disabled="@(StateService.IsRunning || isInitializing)" />
+                        <span class="@(isEnabled ? "service-enabled" : "service-disabled")">@serviceName</span>
+                    </label>
+                </div>
+            }
+        </div>
+        <div style="margin-top: 10px; padding: 10px; background-color: #f0f0f0; border-radius: 4px;">
+            <strong>Enabled:</strong> @Config.EnabledSearchServices.Count of @GetAllSearchServices().Count
+        </div>
+        }
+
     </div>
 
     @if (StateService.IsRunning || StateService.Total > 0 || isInitializing)
@@ -181,10 +422,9 @@
         var totalIgnored = totalIgnoredFromControl + totalIgnoredFromTest;
         var matchedDueToIgnoring = resultsSnapshot.Count(r => IsEffectiveMatch(r) && (r.IgnoredFromControl.Any() || r.IgnoredFromTest.Any()));
         
-        // Calculate mismatches by ResultSlotType (with contributing search detail) — confirmed only
+        // Calculate mismatches by ResultSlotType — confirmed only
         var mismatchedResults = resultsSnapshot.Where(r => !r.Matched && r.RetryMatched != true).ToList();
         var slotTypeBreakdown = new Dictionary<string, int>();
-        var slotTypeContributors = new Dictionary<string, List<(ComparisonResult Result, int OnlyControlCount, int OnlyTestCount)>>();
         
         foreach (var result in mismatchedResults)
         {
@@ -194,7 +434,6 @@
                 if (!slotTypeBreakdown.ContainsKey(kvp.Key))
                 {
                     slotTypeBreakdown[kvp.Key] = 0;
-                    slotTypeContributors[kvp.Key] = new();
                 }
                 slotTypeBreakdown[kvp.Key] += kvp.Value.Count;
             }
@@ -205,25 +444,8 @@
                 if (!slotTypeBreakdown.ContainsKey(kvp.Key))
                 {
                     slotTypeBreakdown[kvp.Key] = 0;
-                    slotTypeContributors[kvp.Key] = new();
                 }
                 slotTypeBreakdown[kvp.Key] += kvp.Value.Count;
-            }
-            
-            // Build contributor entries per slot type
-            var allSlotTypes = result.OnlyInControlBySlotType.Keys
-                .Union(result.OnlyInTestBySlotType.Keys)
-                .Distinct();
-            foreach (var slotType in allSlotTypes)
-            {
-                var onlyControlCount = result.OnlyInControlBySlotType.TryGetValue(slotType, out var oc) ? oc.Count : 0;
-                var onlyTestCount = result.OnlyInTestBySlotType.TryGetValue(slotType, out var ot) ? ot.Count : 0;
-                if (onlyControlCount > 0 || onlyTestCount > 0)
-                {
-                    if (!slotTypeContributors.ContainsKey(slotType))
-                        slotTypeContributors[slotType] = new();
-                    slotTypeContributors[slotType].Add((result, onlyControlCount, onlyTestCount));
-                }
             }
         }
         
@@ -294,61 +516,22 @@
                     }
                 </div>
 
-                @if (selectedSlotType != null && slotTypeContributors.TryGetValue(selectedSlotType, out var contributors))
+                @if (selectedSlotType != null)
                 {
                     <div class="slot-detail-panel">
-                        <h3 style="margin: 0 0 12px 0; color: var(--primary-color);">
-                            Searches contributing to <strong>@FormatSlotType(selectedSlotType)</strong> mismatches
-                            <span style="font-weight: 400; font-size: 0.85rem; color: #666;"> — @contributors.Count search(es)</span>
+                        <h3 style="margin: 0; color: var(--primary-color); display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            Results are filtered by <strong>@FormatSlotType(selectedSlotType)</strong>
+                            <button class="btn btn-secondary" style="font-size: 0.8rem; padding: 4px 10px;" @onclick='() => selectedSlotType = null'>
+                                Clear filter
+                            </button>
                         </h3>
-                        <table class="results-table" style="margin-top: 0;">
-                            <thead>
-                                <tr>
-                                    <th>Search Service</th>
-                                    <th>Searcher User ID</th>
-                                    <th>Site Code</th>
-                                    <th>Only in Control</th>
-                                    <th>Only in Test</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var c in contributors.OrderByDescending(c => c.OnlyControlCount + c.OnlyTestCount))
-                                {
-                                    <tr>
-                                        <td><span class="service-badge">@c.Result.SearchServiceName</span></td>
-                                        <td>
-                                            <strong>@c.Result.SearcherUserId</strong>
-                                            <br />
-                                            <a href="/parameters?filter=@c.Result.SearcherUserId"
-                                               style="font-size: 0.8rem; color: var(--primary-color); text-decoration: none;"
-                                               title="View search parameters for this user">
-                                                📋 Params
-                                            </a>
-                                        </td>
-                                        <td>@c.Result.SiteCode</td>
-                                        <td style="color: var(--danger-color); font-weight: 600;">@c.OnlyControlCount</td>
-                                        <td style="color: var(--primary-color); font-weight: 600;">@c.OnlyTestCount</td>
-                                        <td>
-                                            @if (c.Result.WasRetried && c.Result.RetryMatched == false)
-                                            {
-                                                <span class="badge badge-danger">🔁 Confirmed</span>
-                                            }
-                                            else
-                                            {
-                                                <span class="badge badge-danger">✗ Diff</span>
-                                            }
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
                     </div>
                 }
             </div>
         }
 
         <div class="card">
+            @{ var filteredResults = GetSlotFilteredResultsSnapshot(); }
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h2 style="margin: 0;">Results</h2>
                 <div style="display: flex; gap: 10px; align-items: center;">
@@ -380,7 +563,7 @@
                 @foreach (var serviceGroup in GetFilteredGroupedByService())
                 {
                     var displayed = serviceGroup.Count();
-                    var allForService = StateService.Results.Where(r => r.SearchServiceName == serviceGroup.Key);
+                    var allForService = filteredResults.Where(r => r.SearchServiceName == serviceGroup.Key);
                     var serviceMatched = allForService.Count(r => IsEffectiveMatch(r));
                     var serviceMismatched = allForService.Count(r => !IsEffectiveMatch(r));
 
@@ -398,7 +581,7 @@
                         @foreach (var siteGroup in serviceGroup.GroupBy(r => r.SiteCode).OrderBy(g => g.Key))
                         {
                             var siteDisplayed = siteGroup.Count();
-                            var allForServiceSite = StateService.Results.Where(r => r.SearchServiceName == serviceGroup.Key && r.SiteCode == siteGroup.Key);
+                            var allForServiceSite = filteredResults.Where(r => r.SearchServiceName == serviceGroup.Key && r.SiteCode == siteGroup.Key);
                             var siteMatchedTotal = allForServiceSite.Count(r => IsEffectiveMatch(r));
                             var siteMismatchedTotal = allForServiceSite.Count(r => !IsEffectiveMatch(r));
 
@@ -568,7 +751,7 @@
                 @foreach (var siteGroup in GetFilteredGroupedBySiteCode())
                 {
                     var displayed = siteGroup.Count();
-                    var allForSite = StateService.Results.Where(r => r.SiteCode == siteGroup.Key);
+                    var allForSite = filteredResults.Where(r => r.SiteCode == siteGroup.Key);
                     var siteMatchedTotal = allForSite.Count(r => IsEffectiveMatch(r));
                     var siteMismatchedTotal = allForSite.Count(r => !IsEffectiveMatch(r));
 
@@ -750,10 +933,23 @@
     private string filterText = "";
     private string filterStatus = "mismatched"; // Default to showing mismatches only
     private bool groupByService = true; // Default to grouping by service
+    private string activeConfigTab = "configuration";
     private bool isInitializing = false;
     private bool isRefreshingParameters = false;
     private string initializationMessage = "";
     private CancellationTokenSource? _cts;
+    private CancellationTokenSource? _adminPollingCts;
+    private static readonly TimeSpan AdminPollInterval = TimeSpan.FromSeconds(5);
+    private bool isAdminBusy;
+    private string? adminMessage;
+    private string? adminError;
+    private ServerAdminState? controlAdminState;
+    private ServerAdminState? testAdminState;
+    private int selectedShardId;
+    private bool shouldAutoHideRestartMessage;
+    private bool isComparisonStartAllowed =>
+        IsReadyState(controlAdminState?.Readiness) &&
+        IsReadyState(testAdminState?.Readiness);
     private string? selectedSlotType;
     private List<string> allSearchServices = new List<string>
     {
@@ -775,6 +971,8 @@
     {
         StateService.StateChanged += OnStateChanged;
         LoggingService.Initialize(Config);
+        _adminPollingCts = new CancellationTokenSource();
+        _ = PollAdminStateAsync(_adminPollingCts.Token);
     }
 
     private void OnStateChanged()
@@ -848,8 +1046,79 @@
         }
     }
 
+    private async Task SetShardControl() => await SetShardTargets(ServerTarget.Control);
+    private async Task SetShardTest() => await SetShardTargets(ServerTarget.Test);
+    private async Task SetShardBoth() => await SetShardTargets(ServerTarget.Control, ServerTarget.Test);
+
+    private async Task RestartControl() => await RestartTargets(ServerTarget.Control);
+    private async Task RestartTest() => await RestartTargets(ServerTarget.Test);
+    private async Task RestartBoth() => await RestartTargets(ServerTarget.Control, ServerTarget.Test);
+
+    private async Task SetShardTargets(params ServerTarget[] targets)
+    {
+        await ExecuteAdminAction(async () =>
+        {
+            var tasks = targets.Select(t => AdminControlService.SetShardId(t, selectedShardId)).ToList();
+            var results = await Task.WhenAll(tasks);
+            HandleOperationResults(results, $"ShardId set to {selectedShardId}.");
+        });
+    }
+
+    private async Task RestartTargets(params ServerTarget[] targets)
+    {
+        await ExecuteAdminAction(async () =>
+        {
+            var tasks = targets.Select(AdminControlService.RestartService).ToList();
+            var results = await Task.WhenAll(tasks);
+            shouldAutoHideRestartMessage = results.All(r => r.Success);
+            HandleOperationResults(results, "Restart action completed.");
+        });
+    }
+
+    private async Task ExecuteAdminAction(Func<Task> action)
+    {
+        try
+        {
+            isAdminBusy = true;
+            adminError = null;
+            adminMessage = null;
+            await InvokeAsync(StateHasChanged);
+
+            await action();
+            await RefreshAdminState(showBusyIndicator: false, clearMessages: false);
+        }
+        catch (Exception ex)
+        {
+            adminError = ex.Message;
+        }
+        finally
+        {
+            isAdminBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void HandleOperationResults(IEnumerable<OperationResult> results, string successMessage)
+    {
+        var failures = results.Where(r => !r.Success).Select(r => r.Message).ToList();
+        if (failures.Any())
+        {
+            adminError = string.Join(Environment.NewLine, failures);
+            return;
+        }
+
+        adminMessage = successMessage;
+    }
+
     private async Task StartComparison()
     {
+        if (!isComparisonStartAllowed)
+        {
+            errorMessage = "Cannot start comparison until both Control and Test readiness are Ready.";
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
         var cancellationToken = _cts.Token;
@@ -1005,7 +1274,7 @@
 
     private IEnumerable<IGrouping<string, ComparisonResult>> GetFilteredGroupedByService()
     {
-        var results = StateService.Results.ToList(); // Create a snapshot
+        var results = GetSlotFilteredResultsSnapshot();
         var filtered = results.AsEnumerable();
 
         // Apply status filter
@@ -1027,7 +1296,7 @@
 
     private IEnumerable<IGrouping<short, ComparisonResult>> GetFilteredGroupedBySiteCode()
     {
-        var results = StateService.Results.ToList(); // Create a snapshot
+        var results = GetSlotFilteredResultsSnapshot();
         var filtered = results.AsEnumerable();
 
         // Apply status filter
@@ -1132,10 +1401,137 @@
         return slotTypeKey;
     }
 
+    private List<ComparisonResult> GetSlotFilteredResultsSnapshot()
+    {
+        var results = StateService.Results.ToList();
+        if (string.IsNullOrWhiteSpace(selectedSlotType))
+        {
+            return results;
+        }
+
+        return results
+            .Where(r =>
+                r.OnlyInControlBySlotType.ContainsKey(selectedSlotType) ||
+                r.OnlyInTestBySlotType.ContainsKey(selectedSlotType))
+            .ToList();
+    }
+
+    private async Task PollAdminStateAsync(CancellationToken cancellationToken)
+    {
+        await RefreshAdminState(showBusyIndicator: false, clearMessages: false);
+        using var timer = new PeriodicTimer(AdminPollInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await RefreshAdminState(showBusyIndicator: false, clearMessages: false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected during component teardown.
+        }
+    }
+
+    private async Task RefreshAdminState()
+    {
+        await RefreshAdminState(showBusyIndicator: true, clearMessages: true);
+    }
+
+    private async Task RefreshAdminState(bool showBusyIndicator, bool clearMessages)
+    {
+        if (!showBusyIndicator && isAdminBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            if (showBusyIndicator)
+            {
+                isAdminBusy = true;
+                if (clearMessages)
+                {
+                    adminError = null;
+                    adminMessage = null;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            var controlTask = AdminControlService.GetServerState(ServerTarget.Control);
+            var testTask = AdminControlService.GetServerState(ServerTarget.Test);
+            await Task.WhenAll(controlTask, testTask);
+
+            controlAdminState = controlTask.Result;
+            testAdminState = testTask.Result;
+            TryAutoHideRestartMessage();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            controlAdminState ??= ServerAdminState.Failed("Control", ex.Message);
+            testAdminState ??= ServerAdminState.Failed("Test", ex.Message);
+            if (showBusyIndicator)
+            {
+                adminError = $"Failed to refresh server status: {ex.Message}";
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            if (showBusyIndicator)
+            {
+                isAdminBusy = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private static bool IsReadyState(string? readiness) =>
+        string.Equals(readiness, "Ready", StringComparison.OrdinalIgnoreCase);
+
+    private void TryAutoHideRestartMessage()
+    {
+        if (!shouldAutoHideRestartMessage)
+        {
+            return;
+        }
+
+        var controlInRestartTransition = IsHydratingOrRunningState(controlAdminState?.Readiness);
+        var testInRestartTransition = IsHydratingOrRunningState(testAdminState?.Readiness);
+        if (controlInRestartTransition && testInRestartTransition)
+        {
+            shouldAutoHideRestartMessage = false;
+            adminMessage = null;
+        }
+    }
+
+    private static bool IsHydratingOrRunningState(string? readiness) =>
+        string.Equals(readiness, "Hydrating", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(readiness, "Running", StringComparison.OrdinalIgnoreCase);
+
+    private static string GetReadinessStyle(string readiness)
+    {
+        return readiness switch
+        {
+            "Ready" => "color: #166534; font-weight: 700;",
+            "Hydrating" => "color: #92400e; font-weight: 700;",
+            "NotRunning" => "color: #991b1b; font-weight: 700;",
+            _ => "color: #475569; font-weight: 700;"
+        };
+    }
+
+    private static string GetRuntimeStatus(ServerAdminState state) =>
+        state.ProcessRunning ? "Running" : "Not running";
+
     public void Dispose()
     {
         StateService.StateChanged -= OnStateChanged;
         _cts?.Cancel();
         _cts?.Dispose();
+        _adminPollingCts?.Cancel();
+        _adminPollingCts?.Dispose();
     }
 }

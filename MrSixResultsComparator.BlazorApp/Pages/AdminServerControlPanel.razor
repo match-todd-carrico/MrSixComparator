@@ -1,0 +1,254 @@
+@using MrSixResultsComparator.BlazorApp.Data
+@namespace MrSixResultsComparator.BlazorApp.Pages
+@inject MrSixAdminControlService AdminControlService
+@implements IAsyncDisposable
+
+<p style="color: #666; margin-bottom: 12px;">
+    Uses the server admin API with per-server API keys.
+</p>
+
+    @if (!string.IsNullOrWhiteSpace(adminMessage))
+    {
+        <div style="padding: 10px 12px; margin-bottom: 10px; background: #e8f5e9; border: 1px solid #66bb6a; border-radius: 4px;">
+            @adminMessage
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(adminError))
+    {
+        <div style="padding: 10px 12px; margin-bottom: 10px; background: #ffebee; border: 1px solid #ef5350; border-radius: 4px;">
+            @adminError
+        </div>
+    }
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px;">
+        @foreach (var state in GetAdminStates())
+        {
+            <div style="border: 1px solid #ddd; border-radius: 6px; padding: 12px;">
+                <h3 style="margin: 0 0 8px 0;">@state.ServerName</h3>
+                @if (!string.IsNullOrWhiteSpace(state.Error))
+                {
+                    <div style="color: #c62828; font-weight: 500;">@state.Error</div>
+                }
+                else
+                {
+                    <div><strong>ShardId:</strong> @(state.ShardId ?? "(not set)")</div>
+                    <div><strong>Service:</strong> @state.ServiceStatus</div>
+                    <div><strong>SearchEngineHost.exe:</strong> @(state.ProcessRunning ? "Running" : "Not running")</div>
+                    <div><strong>Readiness:</strong> <span style="@GetReadinessStyle(state.Readiness)">@state.Readiness</span></div>
+                }
+            </div>
+        }
+    </div>
+
+    <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+        <button class="btn btn-secondary" @onclick="RefreshAdminState" disabled="@isAdminBusy">
+            @(isAdminBusy ? "⏳ Working..." : "🔄 Refresh Server Status")
+        </button>
+    </div>
+
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px;">
+        <label style="font-weight: 500;">Set ShardId:</label>
+        <select @bind="selectedShardId" disabled="@isAdminBusy" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            @for (var i = 0; i <= 4; i++)
+            {
+                <option value="@i">@i</option>
+            }
+        </select>
+        <button class="btn btn-primary" @onclick="SetShardControl" disabled="@isAdminBusy">Set Control</button>
+        <button class="btn btn-primary" @onclick="SetShardTest" disabled="@isAdminBusy">Set Test</button>
+        <button class="btn btn-primary" @onclick="SetShardBoth" disabled="@isAdminBusy">Set Both</button>
+    </div>
+
+<div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+    <label style="font-weight: 500;">Restart Match.MrSix:</label>
+    <button class="btn btn-danger" @onclick="RestartControl" disabled="@isAdminBusy">Restart Control</button>
+    <button class="btn btn-danger" @onclick="RestartTest" disabled="@isAdminBusy">Restart Test</button>
+    <button class="btn btn-danger" @onclick="RestartBoth" disabled="@isAdminBusy">Restart Both</button>
+</div>
+
+@code {
+    private static readonly TimeSpan ReadinessPollInterval = TimeSpan.FromSeconds(5);
+    private bool isAdminBusy;
+    private string? adminMessage;
+    private string? adminError;
+    private ServerAdminState? controlAdminState;
+    private ServerAdminState? testAdminState;
+    private int selectedShardId;
+    private CancellationTokenSource? readinessPollingCts;
+    private Task? readinessPollingTask;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAdminState();
+        StartReadinessPolling();
+    }
+
+    private IEnumerable<ServerAdminState> GetAdminStates()
+    {
+        if (controlAdminState is not null) yield return controlAdminState;
+        if (testAdminState is not null) yield return testAdminState;
+    }
+
+    private async Task RefreshAdminState()
+    {
+        await RefreshAdminState(showBusyIndicator: true, clearMessages: true);
+    }
+
+    private async Task RefreshAdminState(bool showBusyIndicator, bool clearMessages)
+    {
+        if (!showBusyIndicator && isAdminBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            if (showBusyIndicator)
+            {
+                isAdminBusy = true;
+                if (clearMessages)
+                {
+                    adminError = null;
+                    adminMessage = null;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            var controlTask = AdminControlService.GetServerState(ServerTarget.Control);
+            var testTask = AdminControlService.GetServerState(ServerTarget.Test);
+            await Task.WhenAll(controlTask, testTask);
+
+            controlAdminState = controlTask.Result;
+            testAdminState = testTask.Result;
+        }
+        catch (Exception ex)
+        {
+            if (showBusyIndicator)
+            {
+                adminError = $"Failed to refresh server status: {ex.Message}";
+            }
+        }
+        finally
+        {
+            if (showBusyIndicator)
+            {
+                isAdminBusy = false;
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void StartReadinessPolling()
+    {
+        readinessPollingCts = new CancellationTokenSource();
+        readinessPollingTask = PollReadinessAsync(readinessPollingCts.Token);
+    }
+
+    private async Task PollReadinessAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(ReadinessPollInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await RefreshAdminState(showBusyIndicator: false, clearMessages: false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when the component is disposed.
+        }
+    }
+
+    private async Task SetShardControl() => await SetShardTargets(ServerTarget.Control);
+    private async Task SetShardTest() => await SetShardTargets(ServerTarget.Test);
+    private async Task SetShardBoth() => await SetShardTargets(ServerTarget.Control, ServerTarget.Test);
+
+    private async Task RestartControl() => await RestartTargets(ServerTarget.Control);
+    private async Task RestartTest() => await RestartTargets(ServerTarget.Test);
+    private async Task RestartBoth() => await RestartTargets(ServerTarget.Control, ServerTarget.Test);
+
+    private async Task SetShardTargets(params ServerTarget[] targets)
+    {
+        await ExecuteAdminAction(async () =>
+        {
+            var tasks = targets.Select(t => AdminControlService.SetShardId(t, selectedShardId)).ToList();
+            var results = await Task.WhenAll(tasks);
+            HandleOperationResults(results, $"ShardId set to {selectedShardId}.");
+        });
+    }
+
+    private async Task RestartTargets(params ServerTarget[] targets)
+    {
+        await ExecuteAdminAction(async () =>
+        {
+            var tasks = targets.Select(AdminControlService.RestartService).ToList();
+            var results = await Task.WhenAll(tasks);
+            HandleOperationResults(results, "Restart action completed.");
+        });
+    }
+
+    private async Task ExecuteAdminAction(Func<Task> action)
+    {
+        try
+        {
+            isAdminBusy = true;
+            adminError = null;
+            adminMessage = null;
+            await InvokeAsync(StateHasChanged);
+
+            await action();
+            await RefreshAdminState();
+        }
+        catch (Exception ex)
+        {
+            adminError = ex.Message;
+        }
+        finally
+        {
+            isAdminBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void HandleOperationResults(IEnumerable<OperationResult> results, string successMessage)
+    {
+        var failures = results.Where(r => !r.Success).Select(r => r.Message).ToList();
+        if (failures.Any())
+        {
+            adminError = string.Join(Environment.NewLine, failures);
+            return;
+        }
+
+        adminMessage = successMessage;
+    }
+
+    private static string GetReadinessStyle(string readiness)
+    {
+        return readiness switch
+        {
+            "Ready" => "color: #166534; font-weight: 700;",
+            "Hydrating" => "color: #92400e; font-weight: 700;",
+            "NotRunning" => "color: #991b1b; font-weight: 700;",
+            _ => "color: #475569; font-weight: 700;"
+        };
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (readinessPollingCts is null)
+        {
+            return;
+        }
+
+        readinessPollingCts.Cancel();
+        if (readinessPollingTask is not null)
+        {
+            await readinessPollingTask;
+        }
+
+        readinessPollingCts.Dispose();
+    }
+}

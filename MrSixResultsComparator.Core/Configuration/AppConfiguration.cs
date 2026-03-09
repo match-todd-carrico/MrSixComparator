@@ -8,6 +8,12 @@ public class AppConfiguration
     public string MrSixControl { get; set; } = "DA1MASC805"; // Configure for environment A
     
     public string MrSixTest { get; set; } = "DA1MASC804"; // Configure for environment B
+
+    // Admin API for shard/service control
+    public string ControlAdminApiBaseUrl { get; set; } = "http://DA1MASC805";
+    public string TestAdminApiBaseUrl { get; set; } = "http://DA1MASC804";
+    public string ControlAdminApiKey { get; set; } = "EE76D9CA-0278-487B-9D17-40ABD04A289B";
+    public string TestAdminApiKey { get; set; } = "EE76D9CA-0278-487B-9D17-40ABD04A289B";
     
     public int MaxParallelism { get; set; } = 5;
     

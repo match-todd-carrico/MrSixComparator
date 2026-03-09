@@ -15,6 +15,7 @@ public partial class App : Application
     {
         var services = new ServiceCollection();
         services.AddWpfBlazorWebView();
+        services.AddHttpClient();
         
 #if DEBUG
         services.AddBlazorWebViewDeveloperTools();
@@ -47,6 +48,7 @@ public partial class App : Application
         
         // Register UI services
         services.AddSingleton<ComparisonStateService>();
+        services.AddSingleton<MrSixAdminControlService>();
 
         Resources.Add("services", services.BuildServiceProvider());
     }
