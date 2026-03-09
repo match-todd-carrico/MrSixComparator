@@ -29,9 +29,9 @@ public class SearchParameter
     public short? LHeight { get; set; }
     public short? UHeight { get; set; }
     public bool PhotosOnly { get; set; }
-    public string SelfString { get; set; }
-    public string SeekString { get; set; }
-    public string WeightString { get; set; }
+    public string? SelfString { get; set; }
+    public string? SeekString { get; set; }
+    public string? WeightString { get; set; }
     public double Latitude { get; set; }
     public double Longitude { get; set; }
     public List<string>? StackConfigs { get; set; }
