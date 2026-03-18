@@ -1,5 +1,8 @@
 using Microsoft.Data.SqlClient;
 using Dapper;
+using MrSIXProxyV2.Input;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Serilog;
 using MrSixResultsComparator.Core.Models;
 
@@ -39,7 +42,8 @@ public class SearchParameterService
         lg.Longitude,
         lg.CallTime,
         sh.ShardID,        
-        RowNum = ROW_NUMBER() Over (Partition By lg.SiteCode, lg.ClassName, lg.WhatIfSearchId Order By lg.CallTime Desc)
+        RowNum = ROW_NUMBER() Over (Partition By lg.SiteCode, lg.ClassName, lg.WhatIfSearchId Order By lg.CallTime Desc),
+        lg.ParamBag
     From SearchData.dbo.SearchLog lg With (ReadUncommitted)
     Join Mcore.dbo.cfgSiteCodeShards sh With (ReadUncommitted)
         On sh.SiteCode = lg.SiteCode
@@ -60,10 +64,10 @@ Where lastFew.RowNum <= 20
             {
                 var results = connection.Query<SearchParameter>(query, new { ShardId = shardId }, commandTimeout: 60).ToList();
                 
-                // Set descriptions for each parameter
                 foreach (var param in results)
                 {
                     param.Description = $"Site:{param.SiteCode} User:{param.SearcherUserId} CallId:{param.CallId}";
+                    TryPopulateGeoFromParamBag(param);
                 }
                 
                 Log.Information("Loaded {Count} search parameters from database", results.Count);
@@ -74,6 +78,30 @@ Where lastFew.RowNum <= 20
         {
             Log.Error(ex, "Failed to load search parameters from database");
             throw;
+        }
+    }
+
+    private static void TryPopulateGeoFromParamBag(SearchParameter param)
+    {
+        if (string.IsNullOrEmpty(param.ParamBag))
+            return;
+
+        try
+        {
+            var bag = JObject.Parse(param.ParamBag);
+            var geoArgsJson = bag.Value<string>("GeoArgsPassedIn");
+            if (string.IsNullOrEmpty(geoArgsJson))
+                return;
+
+            var geo = JsonConvert.DeserializeObject<GeoCriteria>(geoArgsJson);
+
+            if ((geo?.GeoSearchTypeId).GetValueOrDefault(0) > 0)
+                param.Geo = geo;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to parse GeoArgsPassedIn from ParamBag for User:{UserId} CallId:{CallId}",
+                param.SearcherUserId, param.CallId);
         }
     }
 }

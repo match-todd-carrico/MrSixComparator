@@ -12,6 +12,7 @@ public class SearchParameter
     public int WhatIfSearchId { get; set; }
     public GeoCriteria? Geo { get; set; }
     public Guid CallId { get; set; }
+    public string? ParamBag { get; set; }
     public DateTime CallTime { get; set; }
 
     public string SearchName { get; set; } = string.Empty;
