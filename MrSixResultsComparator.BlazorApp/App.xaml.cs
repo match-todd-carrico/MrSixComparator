@@ -49,6 +49,7 @@ public partial class App : Application
         // Register UI services
         services.AddSingleton<ComparisonStateService>();
         services.AddSingleton<MrSixAdminControlService>();
+        services.AddSingleton<ExplainService>();
 
         Resources.Add("services", services.BuildServiceProvider());
     }

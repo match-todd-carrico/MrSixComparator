@@ -314,21 +314,93 @@ public class ComparisonService
             }
         }
         
+        // 6. Compare properties for users present in both result sets
+        var propertyDifferences = CompareProperties(controlResult, testResult, inBoth);
+        
         bool hasDifferences = onlyInA.Any() || onlyInB.Any();
 
         if (hasDifferences)
         {
             RecordDifference(searchParam, userIdsA, userIdsB, onlyInA, onlyInB, inBoth, 
                 controlResult.CallId, testResult.CallId, userIdsBySlotTypeA, userIdsBySlotTypeB,
-                ignoredFromControl, ignoredFromTest);
+                ignoredFromControl, ignoredFromTest, propertyDifferences);
         }
         else
         {
             RecordMatch(searchParam, userIdsA.Count, controlResult.CallId, testResult.CallId, userIdsBySlotTypeA,
-                ignoredFromControl, ignoredFromTest);
+                ignoredFromControl, ignoredFromTest, propertyDifferences);
         }
     }
     
+    private static List<PropertyDifference> CompareProperties(
+        SearchResponse<SearchResultRow> controlResponse,
+        SearchResponse<SearchResultRow> testResponse,
+        List<int> inBoth)
+    {
+        var differences = new List<PropertyDifference>();
+        
+        if (!inBoth.Any() || controlResponse?.Results == null || testResponse?.Results == null)
+            return differences;
+        
+        var controlByUserId = new Dictionary<int, (int Position, SearchResultRow Row)>();
+        for (int i = 0; i < controlResponse.Results.Count; i++)
+        {
+            var row = controlResponse.Results[i];
+            controlByUserId.TryAdd(row.UserId, (i + 1, row));
+        }
+        
+        var testByUserId = new Dictionary<int, (int Position, SearchResultRow Row)>();
+        for (int i = 0; i < testResponse.Results.Count; i++)
+        {
+            var row = testResponse.Results[i];
+            testByUserId.TryAdd(row.UserId, (i + 1, row));
+        }
+        
+        foreach (var userId in inBoth)
+        {
+            if (!controlByUserId.TryGetValue(userId, out var ctrl) ||
+                !testByUserId.TryGetValue(userId, out var test))
+                continue;
+            
+            void Cmp(string name, string controlVal, string testVal)
+            {
+                if (!string.Equals(controlVal, testVal, StringComparison.Ordinal))
+                    differences.Add(new PropertyDifference
+                    {
+                        UserId = userId,
+                        PropertyName = name,
+                        ControlValue = controlVal,
+                        TestValue = testVal
+                    });
+            }
+            
+            Cmp("Position", ctrl.Position.ToString(), test.Position.ToString());
+            Cmp("Relevance", ctrl.Row.MatchCnt.ToString("G"), test.Row.MatchCnt.ToString("G"));
+            Cmp("AlgoId", ctrl.Row.ResultSlotType.ToString(), test.Row.ResultSlotType.ToString());
+            Cmp("Rank", ctrl.Row.Rank.ToString(), test.Row.Rank.ToString());
+            Cmp("ReverseRank", ctrl.Row.ReverseRank.ToString(), test.Row.ReverseRank.ToString());
+            Cmp("AbsoluteMatch", ctrl.Row.AbsoluteMatch.ToString(), test.Row.AbsoluteMatch.ToString());
+            Cmp("FirstTie", ctrl.Row.FirstTie.ToString(), test.Row.FirstTie.ToString());
+            Cmp("SecondTie", ctrl.Row.SecondTie.ToString(), test.Row.SecondTie.ToString());
+            Cmp("ThirdTie", ctrl.Row.ThirdTie.ToString(), test.Row.ThirdTie.ToString());
+            Cmp("FourthTie", ctrl.Row.FourthTie.ToString(), test.Row.FourthTie.ToString());
+            Cmp("FifthTie", ctrl.Row.FifthTie.ToString(), test.Row.FifthTie.ToString());
+            Cmp("SixthTie", ctrl.Row.SixthTie.ToString(), test.Row.SixthTie.ToString());
+            Cmp("Distance", ctrl.Row.Distance.ToString("F2"), test.Row.Distance.ToString("F2"));
+            Cmp("Handle", ctrl.Row.Handle ?? "", test.Row.Handle ?? "");
+            Cmp("ConnectionToMatch", ctrl.Row.ConnectionToMatch.ToString(), test.Row.ConnectionToMatch.ToString());
+            Cmp("ConnectionToSearcher", ctrl.Row.ConnectionToSearcher.ToString(), test.Row.ConnectionToSearcher.ToString());
+        }
+        
+        if (differences.Any())
+        {
+            Log.Information("Found {Count} property differences across {UserCount} users in both result sets",
+                differences.Count, differences.Select(d => d.UserId).Distinct().Count());
+        }
+        
+        return differences;
+    }
+
     /// <summary>
     /// Filters out user IDs from the "only in" list whose LastLoginDate is within the threshold.
     /// These are likely data movement artifacts from the eventually consistent data model.
@@ -367,7 +439,8 @@ public class ComparisonService
         Dictionary<string, List<int>> slotTypeA,
         Dictionary<string, List<int>> slotTypeB,
         List<int>? ignoredFromControl = null,
-        List<int>? ignoredFromTest = null)
+        List<int>? ignoredFromTest = null,
+        List<PropertyDifference>? propertyDifferences = null)
     {
         // Calculate slot type breakdown
         var onlyInControlBySlotType = CalculateSlotTypeBreakdown(onlyInA, slotTypeA);
@@ -394,7 +467,8 @@ public class ComparisonService
             OnlyInTestBySlotType = onlyInTestBySlotType,
             InBothBySlotType = inBothBySlotType,
             IgnoredFromControl = ignoredFromControl ?? new List<int>(),
-            IgnoredFromTest = ignoredFromTest ?? new List<int>()
+            IgnoredFromTest = ignoredFromTest ?? new List<int>(),
+            PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>()
         };
         
         _comparisonResults.Add(result);
@@ -436,7 +510,8 @@ public class ComparisonService
     }
 
     private void RecordMatch(SearchParameter searchParam, int resultCount, Guid controlCallId, Guid testCallId, Dictionary<string, List<int>> slotTypeMapping,
-        List<int>? ignoredFromControl = null, List<int>? ignoredFromTest = null)
+        List<int>? ignoredFromControl = null, List<int>? ignoredFromTest = null,
+        List<PropertyDifference>? propertyDifferences = null)
     {
         // Track this match
         var result = new ComparisonResult
@@ -453,7 +528,8 @@ public class ComparisonService
             SearchServiceName = searchParam.ClassName,
             InBothBySlotType = slotTypeMapping, // All results matched, so store in InBoth
             IgnoredFromControl = ignoredFromControl ?? new List<int>(),
-            IgnoredFromTest = ignoredFromTest ?? new List<int>()
+            IgnoredFromTest = ignoredFromTest ?? new List<int>(),
+            PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>()
         };
         
         _comparisonResults.Add(result);

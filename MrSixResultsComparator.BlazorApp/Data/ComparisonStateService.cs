@@ -87,5 +87,13 @@ public class ComparisonStateService
         NotifyStateChanged();
     }
 
+    public ComparisonResult? GetResultById(Guid id)
+    {
+        lock (_lock)
+        {
+            return _results.FirstOrDefault(r => r.Id == id);
+        }
+    }
+
     private void NotifyStateChanged() => StateChanged?.Invoke();
 }

@@ -1,0 +1,448 @@
+@page "/analysis/{ResultId:guid}"
+@using MrSixResultsComparator.Core.Configuration
+@using MrSixResultsComparator.Core.Models
+@using MrSixResultsComparator.BlazorApp.Data
+@inject AppConfiguration Config
+@inject ComparisonStateService StateService
+@inject ExplainService ExplainService
+@inject IJSRuntime JS
+
+<style>
+    .analysis-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+    }
+
+    .analysis-params {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        font-size: 0.9rem;
+        color: #555;
+    }
+
+    .analysis-params strong {
+        color: var(--text-color);
+    }
+
+    .analysis-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .copy-feedback {
+        font-size: 0.85rem;
+        color: var(--success-color);
+        font-weight: 500;
+        animation: fadeOut 2s ease-in forwards;
+        animation-delay: 1s;
+    }
+
+    @@keyframes fadeOut {
+        from { opacity: 1; }
+        to { opacity: 0; }
+    }
+
+    .prop-diff-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88rem;
+    }
+
+    .prop-diff-table th {
+        background: var(--background-color);
+        padding: 8px 12px;
+        text-align: left;
+        font-weight: 600;
+        border-bottom: 2px solid var(--border-color);
+        position: sticky;
+        top: 0;
+    }
+
+    .prop-diff-table td {
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--border-color);
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        font-size: 0.82rem;
+    }
+
+    .prop-diff-table tr:hover {
+        background: var(--background-color);
+    }
+
+    .prop-diff-container {
+        max-height: 500px;
+        overflow-y: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+    }
+
+    .explain-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .explain-pane {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 15px;
+        border-radius: 6px;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 600px;
+        overflow-y: auto;
+        margin: 0;
+    }
+
+    .explain-label {
+        font-weight: 600;
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+        color: var(--primary-color);
+    }
+
+    .set-diff-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 12px;
+    }
+
+    .set-diff-card {
+        padding: 12px 16px;
+        border-radius: 6px;
+        background: var(--background-color);
+        font-size: 0.88rem;
+    }
+
+    .prop-summary-bar {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 0.85rem;
+        color: #666;
+        margin-bottom: 12px;
+    }
+
+    .prop-summary-bar .chip {
+        padding: 3px 10px;
+        border-radius: 12px;
+        background: #e8f4fd;
+        color: var(--primary-color);
+        font-weight: 500;
+    }
+
+    .filter-row {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+
+    .filter-row input,
+    .filter-row select {
+        padding: 6px 10px;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        font-size: 0.88rem;
+    }
+
+    .filter-row input {
+        flex: 1;
+        min-width: 150px;
+    }
+</style>
+
+<div class="container">
+    <div style="margin-bottom: 12px;">
+        <a href="/" style="color: var(--primary-color); text-decoration: none; font-weight: 500; font-size: 0.9rem;">
+            &larr; Back to Results
+        </a>
+    </div>
+
+    @if (result == null)
+    {
+        <div class="card">
+            <p style="color: var(--danger-color);">Result not found. It may have been cleared.</p>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="analysis-header">
+                <div>
+                    <h2 style="margin-bottom: 8px;">
+                        @if (result.Matched)
+                        {
+                            <span class="badge badge-success">Match</span>
+                        }
+                        else if (result.RetryMatched == true)
+                        {
+                            <span class="badge badge-success">Match (on retry)</span>
+                        }
+                        else
+                        {
+                            <span class="badge badge-danger">Mismatch</span>
+                            @if (result.WasRetried && result.RetryMatched == false)
+                            {
+                                <span class="badge badge-danger" style="margin-left: 5px;">Confirmed</span>
+                            }
+                        }
+                        @if (result.HasPropertyDifferences)
+                        {
+                            <span class="badge badge-warning" style="margin-left: 5px;">Property Changes</span>
+                        }
+                    </h2>
+                    <div class="analysis-params">
+                        <span><strong>Service:</strong> @result.SearchServiceName</span>
+                        <span><strong>SiteCode:</strong> @result.SiteCode</span>
+                        <span><strong>SearcherUserId:</strong> @result.SearcherUserId</span>
+                        <span><strong>Control:</strong> @Config.MrSixControl (@result.ControlCount results)</span>
+                        <span><strong>Test:</strong> @Config.MrSixTest (@result.TestCount results)</span>
+                    </div>
+                </div>
+                <div class="analysis-actions">
+                    @if (showCopied)
+                    {
+                        <span class="copy-feedback">Copied!</span>
+                    }
+                    <button class="btn btn-primary" @onclick="CopyAiContext" disabled="@isCopying">
+                        @(isCopying ? "Building..." : "Copy AI Context")
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        @if (result.OnlyInControl.Any() || result.OnlyInTest.Any() || result.IgnoredFromControl.Any() || result.IgnoredFromTest.Any())
+        {
+            <div class="card">
+                <h2>Set Differences</h2>
+                <div class="set-diff-grid">
+                    @if (result.OnlyInControl.Any())
+                    {
+                        <div class="set-diff-card" style="border-left: 3px solid var(--danger-color);">
+                            <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count)</strong>
+                            <div style="margin-top: 6px; font-family: monospace; font-size: 0.85rem;">
+                                @RenderUserIdLinks(result.OnlyInControl)
+                            </div>
+                        </div>
+                    }
+                    @if (result.OnlyInTest.Any())
+                    {
+                        <div class="set-diff-card" style="border-left: 3px solid var(--primary-color);">
+                            <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count)</strong>
+                            <div style="margin-top: 6px; font-family: monospace; font-size: 0.85rem;">
+                                @RenderUserIdLinks(result.OnlyInTest)
+                            </div>
+                        </div>
+                    }
+                    <div class="set-diff-card" style="border-left: 3px solid var(--success-color);">
+                        <strong style="color: var(--success-color);">In Both (@result.InBoth.Count)</strong>
+                    </div>
+                    @if (result.IgnoredFromControl.Any() || result.IgnoredFromTest.Any())
+                    {
+                        <div class="set-diff-card" style="border-left: 3px solid var(--warning-color); opacity: 0.8;">
+                            <strong style="color: var(--warning-color);">Ignored - Data Movement (@(result.IgnoredFromControl.Count + result.IgnoredFromTest.Count))</strong>
+                            <div style="margin-top: 6px; font-family: monospace; font-size: 0.85rem;">
+                                @if (result.IgnoredFromControl.Any())
+                                {
+                                    <div>Control: @RenderUserIdLinks(result.IgnoredFromControl)</div>
+                                }
+                                @if (result.IgnoredFromTest.Any())
+                                {
+                                    <div>Test: @RenderUserIdLinks(result.IgnoredFromTest)</div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <div class="card">
+            <h2>Property Differences</h2>
+            @if (result.PropertyDifferences.Any())
+            {
+                var affectedUsers = result.PropertyDifferences.Select(d => d.UserId).Distinct().Count();
+                var affectedProps = result.PropertyDifferences.Select(d => d.PropertyName).Distinct().OrderBy(p => p).ToList();
+
+                <div class="prop-summary-bar">
+                    <span>@result.PropertyDifferences.Count differences across @affectedUsers users</span>
+                    @foreach (var prop in affectedProps)
+                    {
+                        <span class="chip">@prop</span>
+                    }
+                </div>
+
+                <div class="filter-row">
+                    <input type="text" placeholder="Filter by UserId..." @bind="propFilterUserId" @bind:event="oninput" />
+                    <select @bind="propFilterProperty">
+                        <option value="">All Properties</option>
+                        @foreach (var prop in affectedProps)
+                        {
+                            <option value="@prop">@prop</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="prop-diff-container">
+                    <table class="prop-diff-table">
+                        <thead>
+                            <tr>
+                                <th>UserId</th>
+                                <th>Property</th>
+                                <th>Control</th>
+                                <th>Test</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var diff in GetFilteredPropertyDiffs())
+                            {
+                                <tr>
+                                    <td>@diff.UserId</td>
+                                    <td style="font-family: 'Segoe UI', sans-serif; font-weight: 500;">@diff.PropertyName</td>
+                                    <td>@diff.ControlValue</td>
+                                    <td>@diff.TestValue</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <p style="color: #999;">No property-level differences detected for users present in both result sets.</p>
+            }
+        </div>
+
+        <div class="card">
+            <h2>Explains</h2>
+            @if (isLoadingExplains)
+            {
+                <div style="text-align: center; padding: 20px;">
+                    <div class="spinner"></div>
+                    <p style="color: var(--primary-color);">Fetching explains from servers...</p>
+                </div>
+            }
+            else if (controlExplain == null && testExplain == null)
+            {
+                <p style="color: #999;">
+                    Explains are not available. They are generated during retry runs with explain enabled.
+                    Ensure <strong>Auto-Retry Mismatches</strong> is turned on for explains to be captured on confirmed mismatches.
+                </p>
+            }
+            else
+            {
+                <div class="explain-grid">
+                    <div>
+                        <div class="explain-label">Control (@Config.MrSixControl)</div>
+                        <pre class="explain-pane">@(controlExplain ?? "Not available")</pre>
+                    </div>
+                    <div>
+                        <div class="explain-label">Test (@Config.MrSixTest)</div>
+                        <pre class="explain-pane">@(testExplain ?? "Not available")</pre>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public Guid ResultId { get; set; }
+
+    private ComparisonResult? result;
+    private string? controlExplain;
+    private string? testExplain;
+    private bool isLoadingExplains;
+    private bool isCopying;
+    private bool showCopied;
+    private string propFilterUserId = "";
+    private string propFilterProperty = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        result = StateService.GetResultById(ResultId);
+
+        if (result != null && result.ControlCallId != Guid.Empty && result.TestCallId != Guid.Empty)
+        {
+            isLoadingExplains = true;
+            StateHasChanged();
+
+            var controlTask = ExplainService.FetchControlExplainAsync(result.ControlCallId);
+            var testTask = ExplainService.FetchTestExplainAsync(result.TestCallId);
+
+            await Task.WhenAll(controlTask, testTask);
+
+            controlExplain = controlTask.Result;
+            testExplain = testTask.Result;
+            isLoadingExplains = false;
+        }
+    }
+
+    private IEnumerable<PropertyDifference> GetFilteredPropertyDiffs()
+    {
+        if (result == null) return Enumerable.Empty<PropertyDifference>();
+
+        var diffs = result.PropertyDifferences.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(propFilterUserId))
+            diffs = diffs.Where(d => d.UserId.ToString().Contains(propFilterUserId));
+
+        if (!string.IsNullOrWhiteSpace(propFilterProperty))
+            diffs = diffs.Where(d => d.PropertyName == propFilterProperty);
+
+        return diffs.OrderBy(d => d.UserId).ThenBy(d => d.PropertyName);
+    }
+
+    private async Task CopyAiContext()
+    {
+        if (result == null) return;
+
+        isCopying = true;
+        StateHasChanged();
+
+        try
+        {
+            if (controlExplain == null && testExplain == null && result.ControlCallId != Guid.Empty)
+            {
+                var controlTask = ExplainService.FetchControlExplainAsync(result.ControlCallId);
+                var testTask = ExplainService.FetchTestExplainAsync(result.TestCallId);
+                await Task.WhenAll(controlTask, testTask);
+                controlExplain = controlTask.Result;
+                testExplain = testTask.Result;
+            }
+
+            var prompt = AiContextBuilder.BuildPrompt(result, Config, controlExplain, testExplain);
+            await JS.InvokeVoidAsync("copyToClipboard", prompt);
+
+            showCopied = true;
+            StateHasChanged();
+            await Task.Delay(3000);
+            showCopied = false;
+        }
+        finally
+        {
+            isCopying = false;
+        }
+    }
+
+    private MarkupString RenderUserIdLinks(List<int> userIds, int max = 20)
+    {
+        var links = userIds.Take(max).Select(id =>
+            $"<a href=\"https://kraken.i.mct360.com/six/UserInfo/{id}/{Config.MrSixControl},{Config.MrSixTest}\" target=\"_blank\" style=\"color: inherit; text-decoration: underline dotted; text-underline-offset: 2px;\" title=\"View {id} in Kraken\">{id}</a>");
+        var html = string.Join(", ", links);
+        if (userIds.Count > max)
+            html += $" ... ({userIds.Count - max} more)";
+        return new MarkupString(html);
+    }
+}

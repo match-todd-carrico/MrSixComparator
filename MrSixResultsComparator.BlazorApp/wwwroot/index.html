@@ -12,5 +12,19 @@
     <div id="app">Loading...</div>
 
     <script src="_framework/blazor.webview.js"></script>
+    <script>
+        window.copyToClipboard = function (text) {
+            navigator.clipboard.writeText(text).catch(function () {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            });
+        };
+    </script>
 </body>
 </html>

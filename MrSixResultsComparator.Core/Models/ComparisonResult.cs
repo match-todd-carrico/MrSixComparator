@@ -2,6 +2,7 @@ namespace MrSixResultsComparator.Core.Models;
 
 public class ComparisonResult
 {
+    public Guid Id { get; set; } = Guid.NewGuid();
     public short SiteCode { get; set; }
     public int SearcherUserId { get; set; }
     public bool Matched { get; set; }
@@ -30,4 +31,8 @@ public class ComparisonResult
     // Data movement tracking - users ignored due to recent LastLoginDate (eventual consistency)
     public List<int> IgnoredFromControl { get; set; } = new();
     public List<int> IgnoredFromTest { get; set; } = new();
+    
+    // Property-level differences for users present in both result sets
+    public List<PropertyDifference> PropertyDifferences { get; set; } = new();
+    public bool HasPropertyDifferences => PropertyDifferences.Any();
 }
