@@ -42,12 +42,13 @@ public class SearchParameterService
         lg.Longitude,
         lg.CallTime,
         sh.ShardID,        
-        RowNum = ROW_NUMBER() Over (Partition By lg.SiteCode, lg.ClassName, lg.WhatIfSearchId Order By lg.CallTime Desc),
-        lg.ParamBag
+        RowNum = ROW_NUMBER() Over (Partition By lg.SiteCode, lg.ClassName, lg.WhatIfSearchId, lg.[Algorithm] Order By lg.CallTime Desc),
+        lg.ParamBag,
+        lg.[Algorithm] 
     From SearchData.dbo.SearchLog lg With (ReadUncommitted)
     Join Mcore.dbo.cfgSiteCodeShards sh With (ReadUncommitted)
         On sh.SiteCode = lg.SiteCode
-    Where CallTime Between DateAdd(Hour, -1, GetDate()-1) And DateAdd(Hour, 0, GetDate()-1)
+    Where lg.CallTime Between DateAdd(Hour, -1, GetDate()-1) And DateAdd(Hour, 0, GetDate()-1)
     And sh.ShardID = @ShardId
     And lg.SearcherUserId > 999
     And lg.ReturnedCount > 0
