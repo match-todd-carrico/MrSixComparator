@@ -35,4 +35,11 @@ public class ComparisonResult
     // Property-level differences for users present in both result sets
     public List<PropertyDifference> PropertyDifferences { get; set; } = new();
     public bool HasPropertyDifferences => PropertyDifferences.Any();
+
+    // StackConfig name in use by the search. Sourced from the original SearchLog.ParamBag
+    // and from each server's response SearchBag. Control may be null until the feature is
+    // deployed there.
+    public string? SourceStackConfig { get; set; }
+    public string? ControlStackConfig { get; set; }
+    public string? TestStackConfig { get; set; }
 }

@@ -32,7 +32,9 @@ public partial class App : Application
         
         // Register all search services
         services.AddSingleton<StackSearchService>();
+        services.AddSingleton<StickerSearchService>();
         services.AddSingleton<OnePushService>();
+        services.AddSingleton<KeywordSearchService>();
         services.AddSingleton<LitBatchService>();
         services.AddSingleton<LitSearchService>();
         services.AddSingleton<MoreLikeThisService>();

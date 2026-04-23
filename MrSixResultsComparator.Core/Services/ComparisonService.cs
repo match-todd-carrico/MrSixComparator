@@ -33,7 +33,9 @@ public class ComparisonService
     public ComparisonService(
         AppConfiguration config,
         StackSearchService stackSearchService,
+        StickerSearchService stickerSearchService,
         OnePushService onePushService,
+        KeywordSearchService keywordSearchService,
         LitBatchService litBatchService,
         LitSearchService litSearchService,
         MoreLikeThisService moreLikeThisService,
@@ -47,12 +49,26 @@ public class ComparisonService
     {
         _config = config;
         _comparisonResults = new ConcurrentBag<ComparisonResult>();
-        
-        // Map ClassName to service instances
+
+        // Map ClassName to service instances.
+        //
+        // Note: SearchParameterService normalizes sticker-family rows (WhatIfSearchId 64/65/68)
+        // from ClassName="Stack" to ClassName="Sticker" so dispatch stays 1:1 on ClassName.
+        //
+        // Intentionally NOT dispatched:
+        //   SearchV4.Venus.* (rolled up from SearchV4.Venus.OneWay.<saved-search-name>, plus
+        //                    .Backfill, .Triangulation, .TwoWay, .SavedSearch*)
+        //     - Engine returns VenusResponse<SearchResultRow>, not SearchResponse<SearchResultRow>.
+        //     - A single VenusToPoco request produces multiple SearchLog rows; one row cannot be
+        //       replayed as a standalone request.
+        //     - MrSIXProxyV2.SearchesV5.VenusBatch is [Obsolete].
+        //   BatchSearch - per-user result list, not SearchResponse<SearchResultRow>.
         _searchServices = new Dictionary<string, ISearchService>(StringComparer.OrdinalIgnoreCase)
         {
             { "Stack", stackSearchService },
+            { "Sticker", stickerSearchService },
             { "SearchV4.OnePush", onePushService },
+            { "SearchV4.KeywordSearch", keywordSearchService },
             { "SearchHighlight.LitBatch", litBatchService },
             { "SearchHighlight.LitSearch", litSearchService },
             { "SearchV4.MoreLikeThis", moreLikeThisService },
@@ -241,6 +257,10 @@ public class ComparisonService
                                        !userIdsControl.Except(userIdsTest).Any() && 
                                        !userIdsTest.Except(userIdsControl).Any();
 
+        // Refresh StackConfig from the retry responses so the UI shows the latest values.
+        originalResult.ControlStackConfig = resultControl?.SearchBag?.GetValueOrDefault("StackConfig") ?? originalResult.ControlStackConfig;
+        originalResult.TestStackConfig = resultTest?.SearchBag?.GetValueOrDefault("StackConfig") ?? originalResult.TestStackConfig;
+
         // If retry still mismatched, update the CallIds to the retry ones for debugging
         if (originalResult.RetryMatched == false)
         {
@@ -319,16 +339,23 @@ public class ComparisonService
         
         bool hasDifferences = onlyInA.Any() || onlyInB.Any();
 
+        // Pull StackConfig from each server's response for visibility on Stack-search mismatches.
+        // Control may be null until the feature is deployed there.
+        var controlStackConfig = controlResult?.SearchBag?.GetValueOrDefault("StackConfig");
+        var testStackConfig = testResult?.SearchBag?.GetValueOrDefault("StackConfig");
+
         if (hasDifferences)
         {
             RecordDifference(searchParam, userIdsA, userIdsB, onlyInA, onlyInB, inBoth, 
                 controlResult.CallId, testResult.CallId, userIdsBySlotTypeA, userIdsBySlotTypeB,
-                ignoredFromControl, ignoredFromTest, propertyDifferences);
+                ignoredFromControl, ignoredFromTest, propertyDifferences,
+                controlStackConfig, testStackConfig);
         }
         else
         {
             RecordMatch(searchParam, userIdsA.Count, controlResult.CallId, testResult.CallId, userIdsBySlotTypeA,
-                ignoredFromControl, ignoredFromTest, propertyDifferences);
+                ignoredFromControl, ignoredFromTest, propertyDifferences,
+                controlStackConfig, testStackConfig);
         }
     }
     
@@ -440,7 +467,9 @@ public class ComparisonService
         Dictionary<string, List<int>> slotTypeB,
         List<int>? ignoredFromControl = null,
         List<int>? ignoredFromTest = null,
-        List<PropertyDifference>? propertyDifferences = null)
+        List<PropertyDifference>? propertyDifferences = null,
+        string? controlStackConfig = null,
+        string? testStackConfig = null)
     {
         // Calculate slot type breakdown
         var onlyInControlBySlotType = CalculateSlotTypeBreakdown(onlyInA, slotTypeA);
@@ -468,7 +497,10 @@ public class ComparisonService
             InBothBySlotType = inBothBySlotType,
             IgnoredFromControl = ignoredFromControl ?? new List<int>(),
             IgnoredFromTest = ignoredFromTest ?? new List<int>(),
-            PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>()
+            PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>(),
+            SourceStackConfig = searchParam.SourceStackConfig,
+            ControlStackConfig = controlStackConfig,
+            TestStackConfig = testStackConfig
         };
         
         _comparisonResults.Add(result);
@@ -481,6 +513,13 @@ public class ComparisonService
         Log.Warning("Control count: {ControlCount}, Test count: {TestCount}", userIdsA.Count, userIdsB.Count);
         Log.Warning("Only in Control: {OnlyInControl}", string.Join(",", onlyInA));
         Log.Warning("Only in Test: {OnlyInTest}", string.Join(",", onlyInB));
+        if (searchParam.SourceStackConfig != null || controlStackConfig != null || testStackConfig != null)
+        {
+            Log.Warning("StackConfig - Source: {SourceStackConfig}, Control: {ControlStackConfig}, Test: {TestStackConfig}",
+                searchParam.SourceStackConfig ?? "<none>",
+                controlStackConfig ?? "<none>",
+                testStackConfig ?? "<none>");
+        }
         if (ignoredFromControl?.Any() == true)
             Log.Information("Ignored from Control (data movement): {Ignored}", string.Join(",", ignoredFromControl));
         if (ignoredFromTest?.Any() == true)
@@ -511,7 +550,8 @@ public class ComparisonService
 
     private void RecordMatch(SearchParameter searchParam, int resultCount, Guid controlCallId, Guid testCallId, Dictionary<string, List<int>> slotTypeMapping,
         List<int>? ignoredFromControl = null, List<int>? ignoredFromTest = null,
-        List<PropertyDifference>? propertyDifferences = null)
+        List<PropertyDifference>? propertyDifferences = null,
+        string? controlStackConfig = null, string? testStackConfig = null)
     {
         // Track this match
         var result = new ComparisonResult
@@ -529,7 +569,10 @@ public class ComparisonService
             InBothBySlotType = slotTypeMapping, // All results matched, so store in InBoth
             IgnoredFromControl = ignoredFromControl ?? new List<int>(),
             IgnoredFromTest = ignoredFromTest ?? new List<int>(),
-            PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>()
+            PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>(),
+            SourceStackConfig = searchParam.SourceStackConfig,
+            ControlStackConfig = controlStackConfig,
+            TestStackConfig = testStackConfig
         };
         
         _comparisonResults.Add(result);

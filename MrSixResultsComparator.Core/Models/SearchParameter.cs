@@ -37,6 +37,10 @@ public class SearchParameter
     public double Longitude { get; set; }
     public List<string>? StackConfigs { get; set; }
 
+    public string? KeyWord { get; set; }
+    public int StickerId { get; set; }
+    public string? SourceStackConfig { get; set; }
+
     public List<int>? SelfAnswerIds
     {
         get

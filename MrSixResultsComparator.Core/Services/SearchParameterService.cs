@@ -42,16 +42,17 @@ public class SearchParameterService
         lg.Longitude,
         lg.CallTime,
         sh.ShardID,        
-        RowNum = ROW_NUMBER() Over (Partition By lg.SiteCode, lg.ClassName, lg.WhatIfSearchId, lg.[Algorithm] Order By lg.CallTime Desc),
+        RowNum = ROW_NUMBER() Over (Partition By lg.SiteCode, lg.ClassName, lg.WhatIfSearchId, lg.[Algorithm], lg.GenderGenderSeek, lg.SearchGeoTypeID Order By lg.CallTime Desc),
         lg.ParamBag,
-        lg.[Algorithm] 
+        lg.[Algorithm],
+        lg.KeyWord 
     From SearchData.dbo.SearchLog lg With (ReadUncommitted)
     Join Mcore.dbo.cfgSiteCodeShards sh With (ReadUncommitted)
         On sh.SiteCode = lg.SiteCode
     Where lg.CallTime Between DateAdd(Hour, -1, GetDate()-1) And DateAdd(Hour, 0, GetDate()-1)
     And sh.ShardID = @ShardId
     And lg.SearcherUserId > 999
-    And lg.ReturnedCount > 0
+    And lg.ReturnedCount > 0    
 )
 Select *
 From lastFew
@@ -69,6 +70,9 @@ Where lastFew.RowNum <= 20
                 {
                     param.Description = $"Site:{param.SiteCode} User:{param.SearcherUserId} CallId:{param.CallId}";
                     TryPopulateGeoFromParamBag(param);
+                    TryPopulateStickerIdFromParamBag(param);
+                    TryPopulateSourceStackConfigFromParamBag(param);
+                    NormalizeClassNameForSticker(param);
                 }
                 
                 Log.Information("Loaded {Count} search parameters from database", results.Count);
@@ -104,5 +108,53 @@ Where lastFew.RowNum <= 20
             Log.Warning(ex, "Failed to parse GeoArgsPassedIn from ParamBag for User:{UserId} CallId:{CallId}",
                 param.SearcherUserId, param.CallId);
         }
+    }
+
+    private static void TryPopulateStickerIdFromParamBag(SearchParameter param)
+    {
+        if (string.IsNullOrEmpty(param.ParamBag))
+            return;
+
+        try
+        {
+            var bag = JObject.Parse(param.ParamBag);
+            var cfgAnswerId = bag.Value<string>("cfgAnswerId");
+            if (!string.IsNullOrEmpty(cfgAnswerId) && int.TryParse(cfgAnswerId, out int stickerId))
+                param.StickerId = stickerId;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to parse cfgAnswerId from ParamBag for User:{UserId} CallId:{CallId}",
+                param.SearcherUserId, param.CallId);
+        }
+    }
+
+    private static void TryPopulateSourceStackConfigFromParamBag(SearchParameter param)
+    {
+        if (string.IsNullOrEmpty(param.ParamBag))
+            return;
+
+        try
+        {
+            var bag = JObject.Parse(param.ParamBag);
+            var stackConfig = bag.Value<string>("StackConfig");
+            if (!string.IsNullOrEmpty(stackConfig))
+                param.SourceStackConfig = stackConfig;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to parse StackConfig from ParamBag for User:{UserId} CallId:{CallId}",
+                param.SearcherUserId, param.CallId);
+        }
+    }
+
+    // SearchLog logs Sticker-family searches (DatingStickerSearch=64, SocialStickerSearch=65,
+    // StickerSearchV2=68) under ClassName="Stack". The MrSIX engine actually routes these via
+    // a separate branch (SearchMethods.StickerSearch). Normalize to "Sticker" here so dispatch
+    // in ComparisonService stays 1:1 on ClassName.
+    private static void NormalizeClassNameForSticker(SearchParameter param)
+    {
+        if (param.WhatIfSearchId is 64 or 65 or 68)
+            param.ClassName = "Sticker";
     }
 }

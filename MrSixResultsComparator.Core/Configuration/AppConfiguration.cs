@@ -25,7 +25,9 @@ public class AppConfiguration
     public HashSet<string> EnabledSearchServices { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "Stack",
+        "Sticker",
         "SearchV4.OnePush",
+        "SearchV4.KeywordSearch",
         "SearchHighlight.LitBatch",
         "SearchHighlight.LitSearch",
         "SearchV4.MoreLikeThis",

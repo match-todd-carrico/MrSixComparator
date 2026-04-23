@@ -10,7 +10,9 @@
 @inject ShardValidationService ShardValidationService
 @inject SearchParameterService SearchParameterService
 @inject StackSearchService StackSearchService
+@inject StickerSearchService StickerSearchService
 @inject OnePushService OnePushService
+@inject KeywordSearchService KeywordSearchService
 @inject LitBatchService LitBatchService
 @inject LitSearchService LitSearchService
 @inject MoreLikeThisService MoreLikeThisService
@@ -1217,7 +1219,9 @@
             var comparisonService = new ComparisonService(
                 Config, 
                 StackSearchService,
+                StickerSearchService,
                 OnePushService,
+                KeywordSearchService,
                 LitBatchService,
                 LitSearchService,
                 MoreLikeThisService,

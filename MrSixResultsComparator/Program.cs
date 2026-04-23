@@ -28,7 +28,9 @@ var searchParameters = searchParameterService.GetSearchParameters(shardId);
 
 // Execute comparisons
 var stackSearchService = new StackSearchService(config);
+var stickerSearchService = new StickerSearchService(config);
 var onePushService = new OnePushService(config);
+var keywordSearchService = new KeywordSearchService(config);
 var litBatchService = new LitBatchService(config);
 var litSearchService = new LitSearchService(config);
 var moreLikeThisService = new MoreLikeThisService(config);
@@ -42,8 +44,10 @@ var twoWayService = new TwoWayService(config);
 
 var comparisonService = new ComparisonService(
     config, 
-    stackSearchService, 
+    stackSearchService,
+    stickerSearchService,
     onePushService,
+    keywordSearchService,
     litBatchService,
     litSearchService,
     moreLikeThisService,
