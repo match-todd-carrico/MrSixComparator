@@ -22,6 +22,13 @@ public class ComparisonResult
     public bool? RetryMatched { get; set; } // null if not retried, true/false if retried
     public int? RetryControlCount { get; set; }
     public int? RetryTestCount { get; set; }
+
+    // Timing (milliseconds). Populated by ComparisonService so the UI and logs can
+    // show where wall-clock time went.
+    public long ControlDurationMs { get; set; }
+    public long TestDurationMs { get; set; }
+    public long? RetryControlDurationMs { get; set; }
+    public long? RetryTestDurationMs { get; set; }
     
     // ResultSlotType breakdown - maps ResultSlotType to user IDs
     public Dictionary<string, List<int>> OnlyInControlBySlotType { get; set; } = new();

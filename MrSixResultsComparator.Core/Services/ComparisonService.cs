@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Serilog;
 using MrSIXProxyV2.ResultsV4;
 using MrSixResultsComparator.Core.Models;
@@ -18,6 +19,19 @@ public class ComparisonResultEventArgs : EventArgs
     public ComparisonResult Result { get; set; } = null!;
 }
 
+/// <summary>
+/// A ClassName that was present in the input but did not run, grouped so the UI can
+/// show what needs manual coverage vs. what was just toggled off.
+/// </summary>
+/// <param name="ClassName">The raw ClassName as it appeared in SearchLog (after any normalization, e.g. Sticker).</param>
+/// <param name="Count">Number of cached parameters that were skipped for this ClassName.</param>
+/// <param name="IsSupportedByTool">
+/// True when ComparisonService has a dispatch entry for this ClassName (so it was skipped only because
+/// the user toggled the service off in the UI). False when the tool has no implementation for this
+/// ClassName yet — these are the cases that need manual coverage.
+/// </param>
+public record SkippedClassNameInfo(string ClassName, int Count, bool IsSupportedByTool);
+
 public class ComparisonService
 {
     private readonly AppConfiguration _config;
@@ -29,6 +43,12 @@ public class ComparisonService
     public event EventHandler<ComparisonResultEventArgs>? DifferenceFound;
 
     public IReadOnlyList<ComparisonResult> Results => _comparisonResults.ToList();
+
+    /// <summary>
+    /// ClassNames that were present in the input but did not run, with counts and a flag indicating
+    /// whether the tool has an implementation for them. Populated at the start of CompareSearchResults.
+    /// </summary>
+    public IReadOnlyList<SkippedClassNameInfo> SkippedClassNames { get; private set; } = Array.Empty<SkippedClassNameInfo>();
 
     public ComparisonService(
         AppConfiguration config,
@@ -90,9 +110,29 @@ public class ComparisonService
             .ToList();
         
         int skippedCount = searchParameters.Count - enabledSearchParameters.Count;
+
+        // Capture the breakdown of skipped ClassNames so the UI can show (a) how many parameters
+        // were dropped per ClassName and (b) whether the tool even has an implementation for them.
+        // "Not supported" is the list that needs manual coverage.
+        var skippedBreakdown = searchParameters
+            .Where(sp => !_config.EnabledSearchServices.Contains(sp.ClassName))
+            .GroupBy(sp => sp.ClassName ?? "(null)")
+            .Select(g => new SkippedClassNameInfo(
+                ClassName: g.Key,
+                Count: g.Count(),
+                IsSupportedByTool: _searchServices.ContainsKey(g.Key)))
+            .OrderByDescending(s => s.Count)
+            .ThenBy(s => s.ClassName)
+            .ToList();
+        SkippedClassNames = skippedBreakdown;
+
         if (skippedCount > 0)
         {
-            Log.Information("Skipping {SkippedCount} search parameters with disabled service types", skippedCount);
+            var unsupportedCount = skippedBreakdown.Where(s => !s.IsSupportedByTool).Sum(s => s.Count);
+            Log.Information(
+                "Skipping {SkippedCount} search parameters ({UnsupportedCount} have no tool implementation). ClassNames: {ClassNames}",
+                skippedCount, unsupportedCount,
+                string.Join(", ", skippedBreakdown.Select(s => $"{s.ClassName}={s.Count}{(s.IsSupportedByTool ? "" : "*")}")));
         }
 
         int total = enabledSearchParameters.Count;
@@ -242,8 +282,21 @@ public class ComparisonService
         Log.Debug("Generated Retry CallIds - Control: {ControlCallId}, Test: {TestCallId}", originalResult.ControlCallId, originalResult.CallId);
         
         // Execute Search on both environments again WITH EXPLAIN ENABLED
+        var retryControlStopwatch = Stopwatch.StartNew();
         var resultControl = await searchService.ExecuteSearch(searchParam, _config.MrSixControl, enableExplain: true);
+        retryControlStopwatch.Stop();
+
+        var retryTestStopwatch = Stopwatch.StartNew();
         var resultTest = await searchService.ExecuteSearch(searchParam, _config.MrSixTest, enableExplain: true);
+        retryTestStopwatch.Stop();
+
+        Log.Information(
+            "Retry timing Service={ClassName} SiteCode={SiteCode} SearcherUserId={SearcherUserId} ControlMs={ControlMs} TestMs={TestMs}",
+            searchParam.ClassName, searchParam.SiteCode, searchParam.SearcherUserId,
+            retryControlStopwatch.ElapsedMilliseconds, retryTestStopwatch.ElapsedMilliseconds);
+
+        originalResult.RetryControlDurationMs = retryControlStopwatch.ElapsedMilliseconds;
+        originalResult.RetryTestDurationMs = retryTestStopwatch.ElapsedMilliseconds;
 
         // Extract UserIds from results
         var userIdsControl = searchService.ExtractUserIds(resultControl);
@@ -291,9 +344,23 @@ public class ComparisonService
             throw new InvalidOperationException($"No search service registered for ClassName: {searchParam.ClassName}");
         }
         
-        // 1. Execute Search on both environments
+        // 1. Execute Search on both environments. Timed so the UI and logs can show where wall-clock
+        // time actually went. Today these run sequentially; if/when we parallelize them the stopwatches
+        // should still record each leg's latency independently.
+        var controlStopwatch = Stopwatch.StartNew();
         var controlResult = await searchService.ExecuteSearch(searchParam, _config.MrSixControl);
+        controlStopwatch.Stop();
+
+        var testStopwatch = Stopwatch.StartNew();
         var testResult = await searchService.ExecuteSearch(searchParam, _config.MrSixTest);
+        testStopwatch.Stop();
+
+        long controlMs = controlStopwatch.ElapsedMilliseconds;
+        long testMs = testStopwatch.ElapsedMilliseconds;
+
+        Log.Information(
+            "Comparison timing Service={ClassName} SiteCode={SiteCode} SearcherUserId={SearcherUserId} ControlMs={ControlMs} TestMs={TestMs}",
+            searchParam.ClassName, searchParam.SiteCode, searchParam.SearcherUserId, controlMs, testMs);
 
         // 2. Extract UserIds from results
         var userIdsA = searchService.ExtractUserIds(controlResult);
@@ -349,13 +416,15 @@ public class ComparisonService
             RecordDifference(searchParam, userIdsA, userIdsB, onlyInA, onlyInB, inBoth, 
                 controlResult.CallId, testResult.CallId, userIdsBySlotTypeA, userIdsBySlotTypeB,
                 ignoredFromControl, ignoredFromTest, propertyDifferences,
-                controlStackConfig, testStackConfig);
+                controlStackConfig, testStackConfig,
+                controlMs, testMs);
         }
         else
         {
             RecordMatch(searchParam, userIdsA.Count, controlResult.CallId, testResult.CallId, userIdsBySlotTypeA,
                 ignoredFromControl, ignoredFromTest, propertyDifferences,
-                controlStackConfig, testStackConfig);
+                controlStackConfig, testStackConfig,
+                controlMs, testMs);
         }
     }
     
@@ -469,7 +538,9 @@ public class ComparisonService
         List<int>? ignoredFromTest = null,
         List<PropertyDifference>? propertyDifferences = null,
         string? controlStackConfig = null,
-        string? testStackConfig = null)
+        string? testStackConfig = null,
+        long controlDurationMs = 0,
+        long testDurationMs = 0)
     {
         // Calculate slot type breakdown
         var onlyInControlBySlotType = CalculateSlotTypeBreakdown(onlyInA, slotTypeA);
@@ -500,7 +571,9 @@ public class ComparisonService
             PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>(),
             SourceStackConfig = searchParam.SourceStackConfig,
             ControlStackConfig = controlStackConfig,
-            TestStackConfig = testStackConfig
+            TestStackConfig = testStackConfig,
+            ControlDurationMs = controlDurationMs,
+            TestDurationMs = testDurationMs
         };
         
         _comparisonResults.Add(result);
@@ -551,7 +624,8 @@ public class ComparisonService
     private void RecordMatch(SearchParameter searchParam, int resultCount, Guid controlCallId, Guid testCallId, Dictionary<string, List<int>> slotTypeMapping,
         List<int>? ignoredFromControl = null, List<int>? ignoredFromTest = null,
         List<PropertyDifference>? propertyDifferences = null,
-        string? controlStackConfig = null, string? testStackConfig = null)
+        string? controlStackConfig = null, string? testStackConfig = null,
+        long controlDurationMs = 0, long testDurationMs = 0)
     {
         // Track this match
         var result = new ComparisonResult
@@ -572,7 +646,9 @@ public class ComparisonService
             PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>(),
             SourceStackConfig = searchParam.SourceStackConfig,
             ControlStackConfig = controlStackConfig,
-            TestStackConfig = testStackConfig
+            TestStackConfig = testStackConfig,
+            ControlDurationMs = controlDurationMs,
+            TestDurationMs = testDurationMs
         };
         
         _comparisonResults.Add(result);

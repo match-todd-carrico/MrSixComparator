@@ -52,6 +52,7 @@ public partial class App : Application
         services.AddSingleton<ComparisonStateService>();
         services.AddSingleton<MrSixAdminControlService>();
         services.AddSingleton<ExplainService>();
+        services.AddSingleton<InMemoryLogSink>();
 
         Resources.Add("services", services.BuildServiceProvider());
     }

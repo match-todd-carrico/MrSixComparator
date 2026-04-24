@@ -21,6 +21,11 @@ public class AppConfiguration
     
     public List<string> ExtensionParams { get; set; } = new List<string>();
     
+    // Optional SiteCode filter applied when loading search parameters from SearchLog.
+    // Empty = no filter (load all SiteCodes for the current ShardId).
+    // When populated, the SQL adds "And lg.SiteCode In (...)" to keep the load focused.
+    public HashSet<short> SiteCodeFilter { get; set; } = new HashSet<short>();
+
     // Configuration for which search services are enabled
     public HashSet<string> EnabledSearchServices { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {

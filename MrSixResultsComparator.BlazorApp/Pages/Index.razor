@@ -24,12 +24,34 @@
 @inject SearchWowService SearchWowService
 @inject TwoWayService TwoWayService
 @inject ComparisonStateService StateService
+@inject InMemoryLogSink LogSink
 @implements IDisposable
 
 <div class="header">
-    <div class="container">
-        <h1>🔍 MrSix Results Comparator</h1>
-        <p>Compare search results between Control and Test environments</p>
+    <div class="container" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <div>
+            <h1>🔍 MrSix Results Comparator</h1>
+            <p>Compare search results between Control and Test environments</p>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+            <a href="javascript:void(0)"
+               @onclick="OpenCurrentLogFile"
+               @onclick:preventDefault="true"
+               title="@(LoggingService.CurrentLogFilePath ?? "No log file yet")"
+               style="color: #fff; text-decoration: underline; font-size: 0.85rem;
+                      opacity: @(string.IsNullOrEmpty(LoggingService.CurrentLogFilePath) ? "0.5" : "1");
+                      pointer-events: @(string.IsNullOrEmpty(LoggingService.CurrentLogFilePath) ? "none" : "auto");">
+                Open log file
+            </a>
+            <span style="color: rgba(255,255,255,0.5); font-size: 0.85rem;">|</span>
+            <a href="javascript:void(0)"
+               @onclick="OpenLogsFolder"
+               @onclick:preventDefault="true"
+               title="@LoggingService.LogDirectory"
+               style="color: #fff; text-decoration: underline; font-size: 0.85rem;">
+                Open logs folder
+            </a>
+        </div>
     </div>
 </div>
 
@@ -279,6 +301,62 @@
                 <button class="btn btn-danger" @onclick="RestartTest" disabled="@isAdminBusy">Restart Test</button>
                 <button class="btn btn-danger" @onclick="RestartBoth" disabled="@isAdminBusy">Restart Both</button>
             </div>
+            @{
+                var siteCodeShard = GetSiteCodeFilterShard();
+                var availableSiteCodes = GetAvailableSiteCodes();
+                var cacheIsPopulated = StateService.CachedSearchParameters != null && StateService.CachedSearchParameters.Any();
+                var filterCount = Config.SiteCodeFilter.Count;
+                var filteredParamCount = GetSiteCodeFilteredCount();
+            }
+            <div class="admin-actions-row" style="align-items: flex-start;">
+                <label style="font-weight: 500; padding-top: 4px;" title="Narrow which SiteCodes the comparison will run against. Applied at dispatch time; does NOT reload the cache.">
+                    SiteCode Filter@(siteCodeShard.HasValue ? $" (Shard {siteCodeShard.Value})" : ""):
+                </label>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; max-width: 640px;">
+                    @if (availableSiteCodes.Count == 0)
+                    {
+                        <span style="font-size: 0.85rem; color: #c62828;">No SiteCodes mapped for this shard.</span>
+                    }
+                    else
+                    {
+                        @foreach (var siteCode in availableSiteCodes)
+                        {
+                            var isChecked = Config.SiteCodeFilter.Contains(siteCode);
+                            var countForSite = cacheIsPopulated
+                                ? StateService.CachedSearchParameters!.Count(p => p.SiteCode == siteCode)
+                                : 0;
+                            <label style="display: inline-flex; align-items: center; gap: 4px; margin: 0; font-size: 0.9rem; white-space: nowrap;"
+                                   title="@(cacheIsPopulated ? $"{countForSite} cached parameter(s)" : "Cache not loaded yet")">
+                                <input type="checkbox"
+                                       checked="@isChecked"
+                                       @onchange="@((e) => ToggleSiteCode(siteCode, (bool)(e.Value ?? false)))"
+                                       disabled="@(StateService.IsRunning || isInitializing)" />
+                                @siteCode@(cacheIsPopulated ? $" ({countForSite})" : "")
+                            </label>
+                        }
+                    }
+                </div>
+                <button type="button" class="btn btn-secondary" style="font-size: 0.8rem; padding: 4px 10px;"
+                        @onclick="() => SelectAllSiteCodes(availableSiteCodes)"
+                        disabled="@(StateService.IsRunning || isInitializing || availableSiteCodes.Count == 0)">
+                    Select All
+                </button>
+                <button type="button" class="btn btn-secondary" style="font-size: 0.8rem; padding: 4px 10px;"
+                        @onclick="ClearSiteCodeFilter"
+                        disabled="@(StateService.IsRunning || isInitializing || filterCount == 0)">
+                    Clear
+                </button>
+                <span style="font-size: 0.8rem; color: #666; padding-top: 4px;">
+                    @if (filterCount == 0)
+                    {
+                        <text>All sites@(cacheIsPopulated ? $" - {filteredParamCount} parameter(s) will run" : "")</text>
+                    }
+                    else
+                    {
+                        <text>@filterCount site(s) selected@(cacheIsPopulated ? $" - {filteredParamCount} parameter(s) will run" : "")</text>
+                    }
+                </span>
+            </div>
             <div class="config-inline-row">
                 <label class="config-inline-label">Max Parallelism</label>
                 <input class="config-inline-input" type="number" @bind="Config.MaxParallelism" min="1" max="20" style="width: 90px;" disabled="@(StateService.IsRunning || isInitializing)" />
@@ -331,8 +409,19 @@
             </button>
             @if (StateService.CachedSearchParameters != null && StateService.CachedSearchParameters.Any())
             {
+                var cachedSiteCodes = StateService.CachedSearchParameters.Select(p => p.SiteCode).Distinct().OrderBy(s => s).ToList();
+                var willRunCount = GetSiteCodeFilteredCount();
+                var isFiltered = Config.SiteCodeFilter.Count > 0 && willRunCount != StateService.CachedSearchParameters.Count;
                 <div style="padding: 8px 12px; background-color: #e8f4fd; border-radius: 4px; font-size: 0.9rem; display: flex; align-items: center; gap: 10px;">
-                    <span><strong>Cached:</strong> @StateService.CachedSearchParameters.Count parameters (ShardId: @StateService.CachedShardId)</span>
+                    <span>
+                        <strong>Cached:</strong> @StateService.CachedSearchParameters.Count parameters
+                        (ShardId: @StateService.CachedShardId,
+                        SiteCodes: @(cachedSiteCodes.Count <= 8 ? string.Join(",", cachedSiteCodes) : $"{cachedSiteCodes.Count} sites"))
+                        @if (isFiltered)
+                        {
+                            <text> &rarr; <strong>@willRunCount</strong> will run</text>
+                        }
+                    </span>
                     <a href="/parameters" style="color: var(--primary-color); text-decoration: none; font-weight: 500;">View →</a>
                 </div>
             }
@@ -495,6 +584,101 @@
                 }
             </div>
         </div>
+
+        var timedResults = resultsSnapshot.Where(r => r.ControlDurationMs > 0 || r.TestDurationMs > 0).ToList();
+        @if (timedResults.Any())
+        {
+            var wallClock = StateService.RunDuration;
+            var sumCpuMs = timedResults.Sum(r => r.ControlDurationMs + r.TestDurationMs);
+            var avgControlMs = (long)timedResults.Average(r => r.ControlDurationMs);
+            var avgTestMs = (long)timedResults.Average(r => r.TestDurationMs);
+            var p95ControlMs = Percentile(timedResults.Select(r => r.ControlDurationMs).ToList(), 0.95);
+            var p95TestMs = Percentile(timedResults.Select(r => r.TestDurationMs).ToList(), 0.95);
+            var maxControlMs = timedResults.Max(r => r.ControlDurationMs);
+            var maxTestMs = timedResults.Max(r => r.TestDurationMs);
+            var retriedResults = timedResults.Where(r => r.WasRetried).ToList();
+            var retryCpuMs = retriedResults.Sum(r => (r.RetryControlDurationMs ?? 0) + (r.RetryTestDurationMs ?? 0));
+            double throughputPerSec = wallClock.HasValue && wallClock.Value.TotalSeconds > 0
+                ? timedResults.Count / wallClock.Value.TotalSeconds
+                : 0;
+
+            <div class="card">
+                <h2>Timing</h2>
+                <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">
+                    Per-search latency measured around each <code>ExecuteSearch</code> call. Control and Test
+                    currently run sequentially per parameter; their sum is the wall-clock cost of one comparison.
+                </p>
+                <div class="summary-grid">
+                    <div class="summary-card">
+                        <h3>Wall Clock</h3>
+                        <p class="value">@FormatDuration(wallClock)</p>
+                        @if (throughputPerSec > 0)
+                        {
+                            <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
+                                @throughputPerSec.ToString("F2") comparisons/sec
+                            </p>
+                        }
+                    </div>
+                    <div class="summary-card">
+                        <h3>Total Search Time</h3>
+                        <p class="value">@FormatDuration(TimeSpan.FromMilliseconds(sumCpuMs))</p>
+                        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
+                            Control + Test summed across all workers
+                        </p>
+                    </div>
+                    <div class="summary-card">
+                        <h3>Avg Control / Test</h3>
+                        <p class="value" style="font-size: 1.3rem;">@avgControlMs ms / @avgTestMs ms</p>
+                        <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
+                            p95: @p95ControlMs / @p95TestMs &nbsp; max: @maxControlMs / @maxTestMs
+                        </p>
+                    </div>
+                    @if (retriedResults.Any())
+                    {
+                        <div class="summary-card" style="border-left: 3px solid #ff9800;">
+                            <h3>Retry Pass</h3>
+                            <p class="value" style="color: #ff9800;">@FormatDuration(TimeSpan.FromMilliseconds(retryCpuMs))</p>
+                            <p style="font-size: 0.8rem; color: #666; margin-top: 5px;">
+                                @retriedResults.Count search(es) retried
+                            </p>
+                        </div>
+                    }
+                </div>
+
+                <h3 style="margin-top: 20px; margin-bottom: 10px;">By Search Service</h3>
+                <table class="results-table" style="font-size: 0.9rem;">
+                    <thead>
+                        <tr>
+                            <th>Service</th>
+                            <th style="text-align: right;">Count</th>
+                            <th style="text-align: right;">Avg Control (ms)</th>
+                            <th style="text-align: right;">Avg Test (ms)</th>
+                            <th style="text-align: right;">p95 Control / Test</th>
+                            <th style="text-align: right;">Max Control / Test</th>
+                            <th style="text-align: right;">Total (s)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var grp in timedResults.GroupBy(r => r.SearchServiceName).OrderByDescending(g => g.Sum(r => r.ControlDurationMs + r.TestDurationMs)))
+                        {
+                            var list = grp.ToList();
+                            var ctrlMs = list.Select(r => r.ControlDurationMs).ToList();
+                            var testMs = list.Select(r => r.TestDurationMs).ToList();
+                            var svcTotalMs = ctrlMs.Sum() + testMs.Sum();
+                            <tr>
+                                <td><strong>@grp.Key</strong></td>
+                                <td style="text-align: right;">@list.Count</td>
+                                <td style="text-align: right;">@((long)ctrlMs.Average())</td>
+                                <td style="text-align: right;">@((long)testMs.Average())</td>
+                                <td style="text-align: right;">@Percentile(ctrlMs, 0.95) / @Percentile(testMs, 0.95)</td>
+                                <td style="text-align: right;">@ctrlMs.Max() / @testMs.Max()</td>
+                                <td style="text-align: right;">@((svcTotalMs / 1000.0).ToString("F1"))</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
 
         @if (slotTypeBreakdown.Any())
         {
@@ -957,11 +1141,168 @@
         </div>
     }
 
+    @if (StateService.SkippedClassNames.Any())
+    {
+        var skipped = StateService.SkippedClassNames;
+        var unsupported = skipped.Where(s => !s.IsSupportedByTool).ToList();
+        var disabled = skipped.Where(s => s.IsSupportedByTool).ToList();
+        var totalSkipped = skipped.Sum(s => s.Count);
+        <div class="card" style="border-left: 4px solid #ff9800;">
+            <h2>Skipped Services <span style="font-weight: 400; color: #666; font-size: 1rem;">(@totalSkipped parameter@(totalSkipped == 1 ? "" : "s"))</span></h2>
+            <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">
+                ClassNames present in the cached parameters that did not run in this comparison.
+                <strong>Not supported by tool</strong> = needs manual coverage until a dispatch entry is added.
+                <strong>Disabled in UI</strong> = the tool can handle it, but the checkbox is off.
+            </p>
+
+            @if (unsupported.Any())
+            {
+                <h3 style="margin-top: 0; margin-bottom: 10px; color: var(--danger-color);">
+                    Not supported by tool (@unsupported.Sum(s => s.Count) parameter@(unsupported.Sum(s => s.Count) == 1 ? "" : "s"))
+                </h3>
+                <table class="results-table" style="font-size: 0.9rem; margin-bottom: 20px;">
+                    <thead>
+                        <tr>
+                            <th>ClassName</th>
+                            <th style="text-align: right;">Count</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in unsupported)
+                        {
+                            <tr>
+                                <td><code>@row.ClassName</code></td>
+                                <td style="text-align: right;"><strong>@row.Count</strong></td>
+                                <td style="color: #666;">Cover manually, or add a dispatch entry in <code>ComparisonService</code>.</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            @if (disabled.Any())
+            {
+                <h3 style="margin-top: 0; margin-bottom: 10px; color: #666;">
+                    Disabled in UI (@disabled.Sum(s => s.Count) parameter@(disabled.Sum(s => s.Count) == 1 ? "" : "s"))
+                </h3>
+                <table class="results-table" style="font-size: 0.9rem;">
+                    <thead>
+                        <tr>
+                            <th>ClassName</th>
+                            <th style="text-align: right;">Count</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in disabled)
+                        {
+                            <tr>
+                                <td><code>@row.ClassName</code></td>
+                                <td style="text-align: right;"><strong>@row.Count</strong></td>
+                                <td style="color: #666;">Enable on the Search Services tab to include in the next run.</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    }
+
     @if (errorMessage != null)
     {
         <div class="card" style="border-left: 4px solid var(--danger-color);">
             <h2 style="color: var(--danger-color);">Error</h2>
             <p>@errorMessage</p>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;">
+                <button type="button" class="btn btn-secondary" style="font-size: 0.85rem;"
+                        @onclick="OpenCurrentLogFile"
+                        disabled="@string.IsNullOrEmpty(LoggingService.CurrentLogFilePath)">
+                    Open log file
+                </button>
+                <button type="button" class="btn btn-secondary" style="font-size: 0.85rem;"
+                        @onclick="OpenLogsFolder">
+                    Open logs folder
+                </button>
+                <button type="button" class="btn btn-secondary" style="font-size: 0.85rem;"
+                        @onclick="() => errorMessage = null">
+                    Dismiss
+                </button>
+            </div>
+        </div>
+    }
+
+    @{
+        var logEvents = LogSink.Snapshot();
+    }
+    @if (logEvents.Count > 0)
+    {
+        <div class="card" style="border-left: 4px solid #c62828;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                <h2 style="margin: 0;">
+                    Recent Errors
+                    <span style="font-weight: 400; color: #666; font-size: 1rem;">
+                        (@LogSink.ErrorCount error@(LogSink.ErrorCount == 1 ? "" : "s"))
+                    </span>
+                </h2>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-secondary" style="font-size: 0.85rem;"
+                            @onclick="OpenCurrentLogFile"
+                            disabled="@string.IsNullOrEmpty(LoggingService.CurrentLogFilePath)"
+                            title="@(LoggingService.CurrentLogFilePath ?? "No log file yet")">
+                        Open log file
+                    </button>
+                    <button type="button" class="btn btn-secondary" style="font-size: 0.85rem;"
+                            @onclick="OpenLogsFolder"
+                            title="@LoggingService.LogDirectory">
+                        Open logs folder
+                    </button>
+                    <button type="button" class="btn btn-secondary" style="font-size: 0.85rem;"
+                            @onclick="() => LogSink.Clear()">
+                        Clear
+                    </button>
+                </div>
+            </div>
+            <p style="color: #666; margin-top: 8px; margin-bottom: 10px; font-size: 0.85rem;">
+                Most recent first. The full structured log with every Information-level event lives in the JSON file.
+            </p>
+            <div style="max-height: 320px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 4px;">
+                <table class="results-table" style="font-size: 0.85rem; margin: 0;">
+                    <thead style="position: sticky; top: 0; background: #f5f5f5;">
+                        <tr>
+                            <th style="width: 140px;">Time</th>
+                            <th style="width: 90px;">Level</th>
+                            <th>Message</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var evt in logEvents.Take(100))
+                        {
+                            <tr>
+                                <td style="white-space: nowrap; color: #666;">
+                                    @evt.TimestampUtc.ToLocalTime().ToString("HH:mm:ss")
+                                </td>
+                                <td style="color: var(--danger-color); font-weight: 600;">@evt.Level</td>
+                                <td>
+                                    <div>@evt.Message</div>
+                                    @if (!string.IsNullOrEmpty(evt.ExceptionMessage))
+                                    {
+                                        <div style="color: var(--danger-color); font-size: 0.8rem; margin-top: 3px;">
+                                            <strong>@evt.ExceptionTypeName:</strong> @evt.ExceptionMessage
+                                        </div>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (logEvents.Count > 100)
+            {
+                <p style="color: #666; font-size: 0.8rem; margin-top: 8px;">
+                    Showing the 100 most recent of @logEvents.Count captured events. Open the log file for the full history.
+                </p>
+            }
         </div>
     }
 </div>
@@ -1008,9 +1349,70 @@
     protected override void OnInitialized()
     {
         StateService.StateChanged += OnStateChanged;
-        LoggingService.Initialize(Config);
+        LoggingService.Initialize(Config, LogSink);
+        LogSink.EventAdded += OnLogEventAdded;
         _adminPollingCts = new CancellationTokenSource();
         _ = PollAdminStateAsync(_adminPollingCts.Token);
+    }
+
+    private void OnLogEventAdded()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OpenCurrentLogFile()
+    {
+        var path = LoggingService.CurrentLogFilePath;
+        if (string.IsNullOrEmpty(path))
+        {
+            Serilog.Log.Warning("Open log file requested but CurrentLogFilePath is null.");
+            return;
+        }
+
+        // Breadcrumb + give the File sink a beat to flush (flushToDiskInterval is 1s).
+        Serilog.Log.Information("User requested to open current log file: {Path}", path);
+
+        if (!System.IO.File.Exists(path))
+        {
+            errorMessage = $"Log file does not exist yet: {path}";
+            Serilog.Log.Warning("Open log file requested but file does not exist: {Path}", path);
+            return;
+        }
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Could not open log file: {ex.Message}";
+            Serilog.Log.Error(ex, "Failed to open log file {Path}", path);
+        }
+    }
+
+    private void OpenLogsFolder()
+    {
+        var dir = LoggingService.LogDirectory;
+        try
+        {
+            if (!System.IO.Directory.Exists(dir))
+                System.IO.Directory.CreateDirectory(dir);
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = dir,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Could not open logs folder: {ex.Message}";
+            Serilog.Log.Error(ex, "Failed to open logs folder {Dir}", dir);
+        }
     }
 
     private void OnStateChanged()
@@ -1051,6 +1453,79 @@
         StateHasChanged();
     }
 
+    // Determine which shard the SiteCode filter UI should reflect. Prefer the Control admin state,
+    // fall back to Test, then to the last successfully cached ShardId. Null = show every mapped SiteCode.
+    private int? GetSiteCodeFilterShard()
+    {
+        if (int.TryParse(controlAdminState?.ShardId, out var controlShard))
+            return controlShard;
+        if (int.TryParse(testAdminState?.ShardId, out var testShard))
+            return testShard;
+        if (StateService.CachedSearchParameters != null && StateService.CachedSearchParameters.Any())
+            return StateService.CachedShardId;
+        return null;
+    }
+
+    // SiteCodes to show as checkboxes. Prefer what's actually in the cache (so the user sees rows
+    // that really have recent data), fall back to the shard map before the first load.
+    private IReadOnlyList<short> GetAvailableSiteCodes()
+    {
+        if (StateService.CachedSearchParameters != null && StateService.CachedSearchParameters.Any())
+        {
+            return StateService.CachedSearchParameters
+                .Select(p => p.SiteCode)
+                .Distinct()
+                .OrderBy(s => s)
+                .ToList();
+        }
+
+        var shard = GetSiteCodeFilterShard();
+        return shard.HasValue
+            ? SiteCodeShardMap.GetSiteCodesForShard(shard.Value)
+            : SiteCodeShardMap.Map.Keys.OrderBy(s => s).ToList();
+    }
+
+    private void ToggleSiteCode(short siteCode, bool isChecked)
+    {
+        if (isChecked)
+            Config.SiteCodeFilter.Add(siteCode);
+        else
+            Config.SiteCodeFilter.Remove(siteCode);
+        StateHasChanged();
+    }
+
+    private void SelectAllSiteCodes(IReadOnlyList<short> availableSiteCodes)
+    {
+        foreach (var siteCode in availableSiteCodes)
+            Config.SiteCodeFilter.Add(siteCode);
+        StateHasChanged();
+    }
+
+    private void ClearSiteCodeFilter()
+    {
+        Config.SiteCodeFilter.Clear();
+        StateHasChanged();
+    }
+
+    // Apply the SiteCode filter to cached parameters at dispatch time. Empty filter = run everything.
+    private List<SearchParameter> ApplySiteCodeFilter(IEnumerable<SearchParameter> parameters)
+    {
+        if (Config.SiteCodeFilter.Count == 0)
+            return parameters.ToList();
+
+        return parameters.Where(p => Config.SiteCodeFilter.Contains(p.SiteCode)).ToList();
+    }
+
+    // How many cached parameters would actually run with the current SiteCode selection.
+    private int GetSiteCodeFilteredCount()
+    {
+        if (StateService.CachedSearchParameters == null)
+            return 0;
+        if (Config.SiteCodeFilter.Count == 0)
+            return StateService.CachedSearchParameters.Count;
+        return StateService.CachedSearchParameters.Count(p => Config.SiteCodeFilter.Contains(p.SiteCode));
+    }
+
     private async Task RefreshSearchParameters()
     {
         try
@@ -1063,8 +1538,8 @@
             // Validate and get ShardId
             var shardId = await Task.Run(() => 
                 ShardValidationService.ValidateAndGetShardId(Config.MrSixControl, Config.MrSixTest));
-            
-            // Get search parameters from database
+
+            // Load every SiteCode on the shard - SiteCode filtering happens at comparison time.
             var searchParameters = await Task.Run(() => 
                 SearchParameterService.GetSearchParameters(shardId));
             
@@ -1075,6 +1550,7 @@
         catch (Exception ex)
         {
             errorMessage = $"Error refreshing parameters: {ex.Message}";
+            Serilog.Log.Error(ex, "Error refreshing search parameters");
             StateService.SetCachedSearchParameters(null!, 0);
         }
         finally
@@ -1153,6 +1629,7 @@
         if (!isComparisonStartAllowed)
         {
             errorMessage = "Cannot start comparison until both Control and Test readiness are Ready.";
+            Serilog.Log.Warning("User attempted to start comparison before readiness: {ErrorMessage}", errorMessage);
             await InvokeAsync(StateHasChanged);
             return;
         }
@@ -1191,6 +1668,7 @@
                 await InvokeAsync(StateHasChanged);
                 await Task.Delay(50);
                 
+                // Load every SiteCode on the shard - SiteCode filtering happens below at dispatch time.
                 var searchParameters = await Task.Run(() => 
                     SearchParameterService.GetSearchParameters(shardId), cancellationToken);
                 
@@ -1213,7 +1691,18 @@
                 throw new InvalidOperationException("Failed to load search parameters");
             }
             
-            StateService.SetProgress(0, StateService.CachedSearchParameters.Count, $"Loaded {StateService.CachedSearchParameters.Count} search parameters");
+            // Apply the SiteCode filter at dispatch time so the cache can stay shard-wide.
+            var runParameters = ApplySiteCodeFilter(StateService.CachedSearchParameters);
+            if (!runParameters.Any())
+            {
+                throw new InvalidOperationException(
+                    $"SiteCode filter excluded every cached parameter. Cached: {StateService.CachedSearchParameters.Count}, Selected SiteCodes: {(Config.SiteCodeFilter.Count == 0 ? "all" : string.Join(",", Config.SiteCodeFilter.OrderBy(s => s)))}");
+            }
+            
+            var filterSuffix = Config.SiteCodeFilter.Count == 0
+                ? ""
+                : $" (filtered to SiteCodes {string.Join(",", Config.SiteCodeFilter.OrderBy(s => s))})";
+            StateService.SetProgress(0, runParameters.Count, $"Loaded {runParameters.Count} of {StateService.CachedSearchParameters.Count} search parameters{filterSuffix}");
 
             // Execute comparisons
             var comparisonService = new ComparisonService(
@@ -1244,9 +1733,10 @@
                 StateService.AddResult(args.Result);
             };
 
-            await comparisonService.CompareSearchResults(StateService.CachedSearchParameters, cancellationToken);
+            await comparisonService.CompareSearchResults(runParameters, cancellationToken);
             
-            StateService.SetProgress(StateService.CachedSearchParameters.Count, StateService.CachedSearchParameters.Count, "Comparison complete!");
+            StateService.SetSkippedClassNames(comparisonService.SkippedClassNames);
+            StateService.SetProgress(runParameters.Count, runParameters.Count, "Comparison complete!");
         }
         catch (OperationCanceledException)
         {
@@ -1257,6 +1747,7 @@
         catch (Exception ex)
         {
             errorMessage = $"Error during comparison: {ex.Message}";
+            Serilog.Log.Error(ex, "Error during comparison run");
             isInitializing = false;
         }
         finally
@@ -1310,6 +1801,28 @@
         if (totalCount == 0) return "0.0";
         var rate = (double)matchedCount / totalCount * 100;
         return rate.ToString("F1");
+    }
+
+    // Nearest-rank percentile. Simple and good enough for a diagnostic panel; not worth
+    // pulling in a stats library for a single-digit number of percentile computations.
+    private static long Percentile(List<long> values, double percentile)
+    {
+        if (values == null || values.Count == 0) return 0;
+        var sorted = values.OrderBy(v => v).ToList();
+        var rank = (int)Math.Ceiling(percentile * sorted.Count) - 1;
+        if (rank < 0) rank = 0;
+        if (rank >= sorted.Count) rank = sorted.Count - 1;
+        return sorted[rank];
+    }
+
+    private static string FormatDuration(TimeSpan? span)
+    {
+        if (!span.HasValue) return "--";
+        var ts = span.Value;
+        if (ts.TotalSeconds < 1) return $"{ts.TotalMilliseconds:F0} ms";
+        if (ts.TotalMinutes < 1) return $"{ts.TotalSeconds:F1} s";
+        if (ts.TotalHours < 1) return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+        return $"{(int)ts.TotalHours}h {ts.Minutes}m {ts.Seconds}s";
     }
 
     private IEnumerable<IGrouping<string, ComparisonResult>> GetFilteredGroupedByService()
@@ -1569,6 +2082,7 @@
     public void Dispose()
     {
         StateService.StateChanged -= OnStateChanged;
+        LogSink.EventAdded -= OnLogEventAdded;
         _cts?.Cancel();
         _cts?.Dispose();
         _adminPollingCts?.Cancel();

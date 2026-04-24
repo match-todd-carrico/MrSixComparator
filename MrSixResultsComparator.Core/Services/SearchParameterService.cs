@@ -17,9 +17,14 @@ public class SearchParameterService
         _connectionString = connectionString;
     }
 
-    public List<SearchParameter> GetSearchParameters(int shardId)
+    public List<SearchParameter> GetSearchParameters(int shardId, IReadOnlyCollection<short>? siteCodeFilter = null)
     {
-        string query = @"
+        // Only apply the SiteCode filter if the caller actually specified something; an empty/null
+        // collection means "no filter" so we still pull every SiteCode for the shard.
+        bool hasSiteCodeFilter = siteCodeFilter != null && siteCodeFilter.Count > 0;
+        string siteCodeClause = hasSiteCodeFilter ? "    And lg.SiteCode In @SiteCodes" : string.Empty;
+
+        string query = $@"
 ;With lastFew As (
     Select
         lg.SearcherUserID, lg.SearchName, lg.WhatIfSearchId, lg.OtherUserId, lg.ClassName, lg.RequestCount, lg.SiteCode, lg.CallID,
@@ -52,7 +57,9 @@ public class SearchParameterService
     Where lg.CallTime Between DateAdd(Hour, -1, GetDate()-1) And DateAdd(Hour, 0, GetDate()-1)
     And sh.ShardID = @ShardId
     And lg.SearcherUserId > 999
-    And lg.ReturnedCount > 0    
+    And lg.ReturnedCount > 0
+    And lg.Servername not in ('DA1MASC804', 'DA1MASC805')
+{siteCodeClause}
 )
 Select *
 From lastFew
@@ -61,10 +68,24 @@ Where lastFew.RowNum <= 20
 
         try
         {
-            Log.Information("Loading search parameters from database for ShardId: {ShardId}", shardId);
+            if (hasSiteCodeFilter)
+            {
+                Log.Information("Loading search parameters from database for ShardId: {ShardId}, SiteCodes: {SiteCodes}",
+                    shardId, string.Join(",", siteCodeFilter!));
+            }
+            else
+            {
+                Log.Information("Loading search parameters from database for ShardId: {ShardId} (all SiteCodes)", shardId);
+            }
+
             using (var connection = new SqlConnection(_connectionString))
             {
-                var results = connection.Query<SearchParameter>(query, new { ShardId = shardId }, commandTimeout: 60).ToList();
+                // Dapper expands "In @SiteCodes" to a parameterized IN clause when the value is IEnumerable.
+                var parameters = hasSiteCodeFilter
+                    ? (object)new { ShardId = shardId, SiteCodes = siteCodeFilter!.ToArray() }
+                    : new { ShardId = shardId };
+
+                var results = connection.Query<SearchParameter>(query, parameters, commandTimeout: 60).ToList();
                 
                 foreach (var param in results)
                 {
