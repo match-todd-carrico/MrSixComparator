@@ -68,19 +68,61 @@ public static class AiContextBuilder
         {
             sb.AppendLine("### Property Differences (users present in both result sets)");
             sb.AppendLine();
+
+            var totalAffectedUsers = result.PropertyDifferences.Select(d => d.UserId).Distinct().Count();
+
+            // Summary line per property — Position also gets a delta distribution.
+            sb.AppendLine("#### By Property");
+            foreach (var grp in result.PropertyDifferences.GroupBy(d => d.PropertyName).OrderByDescending(g => g.Count()))
+            {
+                if (grp.Key == "Position")
+                {
+                    var deltaSummary = grp
+                        .Select(d =>
+                        {
+                            int.TryParse(d.ControlValue, out var c);
+                            int.TryParse(d.TestValue,    out var t);
+                            return t - c;
+                        })
+                        .GroupBy(d => d)
+                        .OrderBy(g => g.Key)
+                        .Select(g => $"{(g.Key > 0 ? "+" : "")}{g.Key}×{g.Count()}");
+                    sb.AppendLine($"- **Position:** {grp.Count()} users (deltas: {string.Join(", ", deltaSummary)})");
+                }
+                else
+                {
+                    sb.AppendLine($"- **{grp.Key}:** {grp.Count()} users");
+                }
+            }
+            sb.AppendLine();
+
+            // Detailed table — top 10 users by position-change magnitude; first 10 if no position changes.
+            const int MaxDetailUsers = 10;
+            var positionDiffs = result.PropertyDifferences.Where(d => d.PropertyName == "Position").ToList();
+            IEnumerable<int> focusIds = positionDiffs.Any()
+                ? positionDiffs
+                    .Select(d => { int.TryParse(d.ControlValue, out var c); int.TryParse(d.TestValue, out var t); return new { d.UserId, Mag = Math.Abs(t - c) }; })
+                    .OrderByDescending(x => x.Mag)
+                    .Take(MaxDetailUsers)
+                    .Select(x => x.UserId)
+                : result.PropertyDifferences.Select(d => d.UserId).Distinct().Take(MaxDetailUsers);
+
+            var focusSet  = focusIds.ToHashSet();
+            var shownUsers = focusSet.Count;
+
+            sb.AppendLine($"#### Detail — top {shownUsers} of {totalAffectedUsers} users (by position change magnitude)");
+            sb.AppendLine();
             sb.AppendLine("| UserId | Property | Control | Test |");
             sb.AppendLine("|--------|----------|---------|------|");
-
-            foreach (var diff in result.PropertyDifferences.OrderBy(d => d.UserId).ThenBy(d => d.PropertyName))
+            foreach (var diff in result.PropertyDifferences
+                .Where(d => focusSet.Contains(d.UserId))
+                .OrderBy(d => d.UserId).ThenBy(d => d.PropertyName))
             {
                 sb.AppendLine($"| {diff.UserId} | {diff.PropertyName} | {diff.ControlValue} | {diff.TestValue} |");
             }
-
             sb.AppendLine();
-
-            var affectedUsers = result.PropertyDifferences.Select(d => d.UserId).Distinct().Count();
-            var affectedProperties = result.PropertyDifferences.Select(d => d.PropertyName).Distinct().OrderBy(p => p);
-            sb.AppendLine($"*{result.PropertyDifferences.Count} differences across {affectedUsers} users. Properties affected: {string.Join(", ", affectedProperties)}*");
+            if (totalAffectedUsers > shownUsers)
+                sb.AppendLine($"*Plus {totalAffectedUsers - shownUsers} more users with smaller changes not shown.*");
             sb.AppendLine();
         }
         else
@@ -88,6 +130,41 @@ public static class AiContextBuilder
             sb.AppendLine("### Property Differences");
             sb.AppendLine("No property-level differences detected for users present in both result sets.");
             sb.AppendLine();
+        }
+
+        // Tie-breaking neighbourhood
+        if (result.NeighbourSnapshots.Any())
+        {
+            sb.AppendLine("### Tie-Breaking Neighbourhood");
+            sb.AppendLine();
+            sb.AppendLine("Top position movers (capped at 10 by magnitude) with their anchor row (*) and ±1 neighbours on each server.");
+            sb.AppendLine();
+
+            var positionDiffsByUser = result.PropertyDifferences
+                .Where(d => d.PropertyName == "Position")
+                .ToDictionary(d => d.UserId);
+
+            foreach (var anchorId in result.NeighbourSnapshots.Select(s => s.AnchorUserId).Distinct())
+            {
+                var anchorPos = positionDiffsByUser.TryGetValue(anchorId, out var pd)
+                    ? $"Control={pd.ControlValue} → Test={pd.TestValue}"
+                    : "position changed";
+
+                sb.AppendLine($"**User {anchorId}** (Position: {anchorPos})");
+                sb.AppendLine("| Server | Pos | UserId | 1st | 2nd | 3rd | 4th | 5th | 6th |");
+                sb.AppendLine("|--------|-----|--------|-----|-----|-----|-----|-----|-----|");
+
+                foreach (var s in result.NeighbourSnapshots
+                    .Where(s => s.AnchorUserId == anchorId)
+                    .OrderBy(s => s.Server)
+                    .ThenBy(s => s.Position))
+                {
+                    var marker = s.IsAnchor ? " *" : "";
+                    sb.AppendLine($"| {s.Server} | {s.Position} | {s.NeighbourUserId}{marker} | {s.FirstTie} | {s.SecondTie} | {s.ThirdTie} | {s.FourthTie} | {s.FifthTie} | {s.SixthTie} |");
+                }
+
+                sb.AppendLine();
+            }
         }
 
         // Explains

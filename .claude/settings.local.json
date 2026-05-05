@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(razor|cs\\)$\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Work\\\\_git\\\\MrSixComparator\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(xargs grep *)"
+    ]
+  }
+}

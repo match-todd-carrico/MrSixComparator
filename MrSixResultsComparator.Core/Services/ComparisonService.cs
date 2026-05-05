@@ -402,8 +402,8 @@ public class ComparisonService
         }
         
         // 6. Compare properties for users present in both result sets
-        var propertyDifferences = CompareProperties(controlResult, testResult, inBoth);
-        
+        var (propertyDifferences, neighbourSnapshots) = CompareProperties(controlResult, testResult, inBoth);
+
         bool hasDifferences = onlyInA.Any() || onlyInB.Any();
 
         // Pull StackConfig from each server's response for visibility on Stack-search mismatches.
@@ -413,51 +413,51 @@ public class ComparisonService
 
         if (hasDifferences)
         {
-            RecordDifference(searchParam, userIdsA, userIdsB, onlyInA, onlyInB, inBoth, 
+            RecordDifference(searchParam, userIdsA, userIdsB, onlyInA, onlyInB, inBoth,
                 controlResult.CallId, testResult.CallId, userIdsBySlotTypeA, userIdsBySlotTypeB,
-                ignoredFromControl, ignoredFromTest, propertyDifferences,
+                ignoredFromControl, ignoredFromTest, propertyDifferences, neighbourSnapshots,
                 controlStackConfig, testStackConfig,
                 controlMs, testMs);
         }
         else
         {
             RecordMatch(searchParam, userIdsA.Count, controlResult.CallId, testResult.CallId, userIdsBySlotTypeA,
-                ignoredFromControl, ignoredFromTest, propertyDifferences,
+                ignoredFromControl, ignoredFromTest, propertyDifferences, neighbourSnapshots,
                 controlStackConfig, testStackConfig,
                 controlMs, testMs);
         }
     }
     
-    private static List<PropertyDifference> CompareProperties(
+    private static (List<PropertyDifference> Differences, List<NeighbourSnapshot> Neighbours) CompareProperties(
         SearchResponse<SearchResultRow> controlResponse,
         SearchResponse<SearchResultRow> testResponse,
         List<int> inBoth)
     {
         var differences = new List<PropertyDifference>();
-        
+
         if (!inBoth.Any() || controlResponse?.Results == null || testResponse?.Results == null)
-            return differences;
-        
+            return (differences, new List<NeighbourSnapshot>());
+
         var controlByUserId = new Dictionary<int, (int Position, SearchResultRow Row)>();
         for (int i = 0; i < controlResponse.Results.Count; i++)
         {
             var row = controlResponse.Results[i];
             controlByUserId.TryAdd(row.UserId, (i + 1, row));
         }
-        
+
         var testByUserId = new Dictionary<int, (int Position, SearchResultRow Row)>();
         for (int i = 0; i < testResponse.Results.Count; i++)
         {
             var row = testResponse.Results[i];
             testByUserId.TryAdd(row.UserId, (i + 1, row));
         }
-        
+
         foreach (var userId in inBoth)
         {
             if (!controlByUserId.TryGetValue(userId, out var ctrl) ||
                 !testByUserId.TryGetValue(userId, out var test))
                 continue;
-            
+
             void Cmp(string name, string controlVal, string testVal)
             {
                 if (!string.Equals(controlVal, testVal, StringComparison.Ordinal))
@@ -469,7 +469,7 @@ public class ComparisonService
                         TestValue = testVal
                     });
             }
-            
+
             Cmp("Position", ctrl.Position.ToString(), test.Position.ToString());
             Cmp("Relevance", ctrl.Row.MatchCnt.ToString("G"), test.Row.MatchCnt.ToString("G"));
             Cmp("AlgoId", ctrl.Row.ResultSlotType.ToString(), test.Row.ResultSlotType.ToString());
@@ -487,15 +487,91 @@ public class ComparisonService
             Cmp("ConnectionToMatch", ctrl.Row.ConnectionToMatch.ToString(), test.Row.ConnectionToMatch.ToString());
             Cmp("ConnectionToSearcher", ctrl.Row.ConnectionToSearcher.ToString(), test.Row.ConnectionToSearcher.ToString());
         }
-        
+
         if (differences.Any())
         {
             Log.Information("Found {Count} property differences across {UserCount} users in both result sets",
                 differences.Count, differences.Select(d => d.UserId).Distinct().Count());
         }
-        
-        return differences;
+
+        var neighbours = BuildNeighbourSnapshots(differences, controlByUserId, testByUserId);
+        return (differences, neighbours);
     }
+
+    private static List<NeighbourSnapshot> BuildNeighbourSnapshots(
+        List<PropertyDifference> differences,
+        Dictionary<int, (int Position, SearchResultRow Row)> controlByUserId,
+        Dictionary<int, (int Position, SearchResultRow Row)> testByUserId)
+    {
+        var snapshots = new List<NeighbourSnapshot>();
+
+        // Cap to the 10 users with the largest position move so the AI context stays concise.
+        var topMovers = differences
+            .Where(d => d.PropertyName == "Position")
+            .Select(d =>
+            {
+                int.TryParse(d.ControlValue, out var c);
+                int.TryParse(d.TestValue, out var t);
+                return new { d.UserId, Delta = Math.Abs(t - c) };
+            })
+            .OrderByDescending(x => x.Delta)
+            .Take(10)
+            .Select(x => x.UserId)
+            .ToHashSet();
+
+        if (!topMovers.Any())
+            return snapshots;
+
+        var controlByPosition = controlByUserId.Values.ToDictionary(t => t.Position, t => t);
+        var testByPosition = testByUserId.Values.ToDictionary(t => t.Position, t => t);
+
+        // Prevent the same (anchor, server, position) triple from being emitted twice.
+        var seen = new HashSet<(int AnchorId, string Server, int Position)>();
+
+        foreach (var anchorId in topMovers)
+        {
+            if (!controlByUserId.TryGetValue(anchorId, out var anchorCtrl) ||
+                !testByUserId.TryGetValue(anchorId, out var anchorTest))
+                continue;
+
+            // Anchor rows — the user themselves on each server.
+            snapshots.Add(MakeSnapshot(anchorId, "Control", anchorCtrl.Position, anchorCtrl.Row, isAnchor: true));
+            snapshots.Add(MakeSnapshot(anchorId, "Test",    anchorTest.Position,  anchorTest.Row,  isAnchor: true));
+
+            void AddNeighbour(string server, int pos,
+                Dictionary<int, (int Position, SearchResultRow Row)> byPosition)
+            {
+                if (!byPosition.TryGetValue(pos, out var found)) return;
+                if (found.Row.UserId == anchorId) return;
+                if (!seen.Add((anchorId, server, pos))) return;
+
+                snapshots.Add(MakeSnapshot(anchorId, server, pos, found.Row, isAnchor: false));
+            }
+
+            AddNeighbour("Control", anchorCtrl.Position - 1, controlByPosition);
+            AddNeighbour("Control", anchorCtrl.Position + 1, controlByPosition);
+            AddNeighbour("Test",    anchorTest.Position  - 1, testByPosition);
+            AddNeighbour("Test",    anchorTest.Position  + 1, testByPosition);
+        }
+
+        return snapshots;
+    }
+
+    private static NeighbourSnapshot MakeSnapshot(int anchorId, string server, int pos, SearchResultRow row, bool isAnchor) =>
+        new NeighbourSnapshot
+        {
+            AnchorUserId  = anchorId,
+            Server        = server,
+            Position      = pos,
+            NeighbourUserId = row.UserId,
+            IsAnchor      = isAnchor,
+            FirstTie      = row.FirstTie.ToString(),
+            SecondTie     = row.SecondTie.ToString(),
+            ThirdTie      = row.ThirdTie.ToString(),
+            FourthTie     = row.FourthTie.ToString(),
+            FifthTie      = row.FifthTie.ToString(),
+            SixthTie      = row.SixthTie.ToString(),
+        };
 
     /// <summary>
     /// Filters out user IDs from the "only in" list whose LastLoginDate is within the threshold.
@@ -524,8 +600,8 @@ public class ComparisonService
     }
 
     private void RecordDifference(
-        SearchParameter searchParam, 
-        List<int> userIdsA, 
+        SearchParameter searchParam,
+        List<int> userIdsA,
         List<int> userIdsB,
         List<int> onlyInA,
         List<int> onlyInB,
@@ -537,6 +613,7 @@ public class ComparisonService
         List<int>? ignoredFromControl = null,
         List<int>? ignoredFromTest = null,
         List<PropertyDifference>? propertyDifferences = null,
+        List<NeighbourSnapshot>? neighbourSnapshots = null,
         string? controlStackConfig = null,
         string? testStackConfig = null,
         long controlDurationMs = 0,
@@ -569,13 +646,14 @@ public class ComparisonService
             IgnoredFromControl = ignoredFromControl ?? new List<int>(),
             IgnoredFromTest = ignoredFromTest ?? new List<int>(),
             PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>(),
+            NeighbourSnapshots = neighbourSnapshots ?? new List<NeighbourSnapshot>(),
             SourceStackConfig = searchParam.SourceStackConfig,
             ControlStackConfig = controlStackConfig,
             TestStackConfig = testStackConfig,
             ControlDurationMs = controlDurationMs,
             TestDurationMs = testDurationMs
         };
-        
+
         _comparisonResults.Add(result);
         OnDifferenceFound(new ComparisonResultEventArgs { Result = result });
         OnComparisonCompleted(new ComparisonResultEventArgs { Result = result });
@@ -624,6 +702,7 @@ public class ComparisonService
     private void RecordMatch(SearchParameter searchParam, int resultCount, Guid controlCallId, Guid testCallId, Dictionary<string, List<int>> slotTypeMapping,
         List<int>? ignoredFromControl = null, List<int>? ignoredFromTest = null,
         List<PropertyDifference>? propertyDifferences = null,
+        List<NeighbourSnapshot>? neighbourSnapshots = null,
         string? controlStackConfig = null, string? testStackConfig = null,
         long controlDurationMs = 0, long testDurationMs = 0)
     {
@@ -644,13 +723,14 @@ public class ComparisonService
             IgnoredFromControl = ignoredFromControl ?? new List<int>(),
             IgnoredFromTest = ignoredFromTest ?? new List<int>(),
             PropertyDifferences = propertyDifferences ?? new List<PropertyDifference>(),
+            NeighbourSnapshots = neighbourSnapshots ?? new List<NeighbourSnapshot>(),
             SourceStackConfig = searchParam.SourceStackConfig,
             ControlStackConfig = controlStackConfig,
             TestStackConfig = testStackConfig,
             ControlDurationMs = controlDurationMs,
             TestDurationMs = testDurationMs
         };
-        
+
         _comparisonResults.Add(result);
         OnComparisonCompleted(new ComparisonResultEventArgs { Result = result });
         

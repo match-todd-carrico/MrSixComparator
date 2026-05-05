@@ -32,7 +32,7 @@
         ,DatingStack = 61
         ,SocialStack = 62
         //,OkCupidStackSearch = 63
-        //,DatingStickerSearch=64
+        ,DatingStickerSearch=64
         ,SocialStickerSearch=65
         //,PofStackSearch=66
         ,DatingStackV2=67

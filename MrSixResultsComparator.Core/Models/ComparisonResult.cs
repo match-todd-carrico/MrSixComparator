@@ -43,6 +43,10 @@ public class ComparisonResult
     public List<PropertyDifference> PropertyDifferences { get; set; } = new();
     public bool HasPropertyDifferences => PropertyDifferences.Any();
 
+    // Tie-breaking values for users immediately adjacent (±1 position) to any user whose
+    // Position changed. Stored even when those neighbours have no differences themselves.
+    public List<NeighbourSnapshot> NeighbourSnapshots { get; set; } = new();
+
     // StackConfig name in use by the search. Sourced from the original SearchLog.ParamBag
     // and from each server's response SearchBag. Control may be null until the feature is
     // deployed there.
