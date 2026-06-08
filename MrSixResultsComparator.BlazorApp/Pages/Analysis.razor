@@ -2,10 +2,13 @@
 @using MrSixResultsComparator.Core.Configuration
 @using MrSixResultsComparator.Core.Models
 @using MrSixResultsComparator.BlazorApp.Data
+@using Microsoft.AspNetCore.Components.Rendering
+@using Newtonsoft.Json
+@using Newtonsoft.Json.Linq
 @inject AppConfiguration Config
 @inject ComparisonStateService StateService
 @inject ExplainService ExplainService
-@inject IJSRuntime JS
+@inject AdminProbeService AdminProbeService
 
 <style>
     .analysis-header {
@@ -16,7 +19,6 @@
         flex-wrap: wrap;
         margin-bottom: 16px;
     }
-
     .analysis-params {
         display: flex;
         gap: 20px;
@@ -24,141 +26,167 @@
         font-size: 0.9rem;
         color: #555;
     }
+    .analysis-params strong { color: var(--text-color); }
 
-    .analysis-params strong {
-        color: var(--text-color);
-    }
-
-    .analysis-actions {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-    }
-
-    .copy-feedback {
-        font-size: 0.85rem;
-        color: var(--success-color);
-        font-weight: 500;
-        animation: fadeOut 2s ease-in forwards;
-        animation-delay: 1s;
-    }
-
-    @@keyframes fadeOut {
-        from { opacity: 1; }
-        to { opacity: 0; }
-    }
-
-    .prop-diff-table {
-        width: 100%;
-        border-collapse: collapse;
+    .delta-row {
+        padding: 4px 10px;
+        border-radius: 4px;
+        margin: 2px 0;
         font-size: 0.88rem;
     }
+    .delta-row.tier-red   { background: #fde8e8; border-left: 4px solid #c62828; }
+    .delta-row.tier-amber { background: #fff4e0; border-left: 4px solid #b45309; }
+    .delta-row.tier-grey  { background: #f3f3f3; border-left: 4px solid #9e9e9e; }
+    .delta-row > summary { cursor: pointer; }
 
-    .prop-diff-table th {
-        background: var(--background-color);
-        padding: 8px 12px;
-        text-align: left;
-        font-weight: 600;
-        border-bottom: 2px solid var(--border-color);
-        position: sticky;
-        top: 0;
+    .tier-badge {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 10px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: white;
     }
+    .tier-badge.tier-red   { background: #c62828; }
+    .tier-badge.tier-amber { background: #b45309; }
+    .tier-badge.tier-grey  { background: #757575; }
 
-    .prop-diff-table td {
-        padding: 6px 12px;
-        border-bottom: 1px solid var(--border-color);
-        font-family: 'Cascadia Code', 'Consolas', monospace;
-        font-size: 0.82rem;
-    }
-
-    .prop-diff-table tr:hover {
-        background: var(--background-color);
-    }
-
-    .prop-diff-container {
-        max-height: 500px;
-        overflow-y: auto;
+    .pool-card {
         border: 1px solid var(--border-color);
         border-radius: 6px;
+        margin-bottom: 12px;
     }
-
-    .explain-grid {
+    .pool-card > summary {
+        padding: 10px 14px;
+        cursor: pointer;
+        font-weight: 600;
+        background: #fafafa;
+    }
+    .pool-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 16px;
+        padding: 12px 14px;
     }
 
-    .explain-pane {
+    .user-card {
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        margin: 8px 0;
+    }
+    .user-card > summary {
+        padding: 8px 12px;
+        cursor: pointer;
+        font-weight: 600;
+        background: #fafafa;
+    }
+    .endpoint-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding: 10px 12px;
+    }
+    .endpoint-block {
         background: #1e1e1e;
         color: #d4d4d4;
-        padding: 15px;
-        border-radius: 6px;
+        padding: 8px 10px;
+        border-radius: 4px;
         font-family: 'Cascadia Code', 'Consolas', monospace;
-        font-size: 0.78rem;
-        line-height: 1.5;
+        font-size: 0.74rem;
+        line-height: 1.4;
         white-space: pre-wrap;
         word-break: break-word;
-        max-height: 600px;
+        max-height: 360px;
         overflow-y: auto;
-        margin: 0;
     }
-
-    .explain-label {
+    .endpoint-label {
         font-weight: 600;
-        font-size: 0.9rem;
-        margin-bottom: 8px;
+        font-size: 0.8rem;
         color: var(--primary-color);
+        margin-bottom: 4px;
     }
+    .endpoint-section { margin-bottom: 10px; }
 
-    .set-diff-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-        gap: 12px;
-    }
-
-    .set-diff-card {
-        padding: 12px 16px;
-        border-radius: 6px;
-        background: var(--background-color);
-        font-size: 0.88rem;
-    }
-
-    .prop-summary-bar {
-        display: flex;
-        gap: 12px;
-        flex-wrap: wrap;
+    .progress-line {
         font-size: 0.85rem;
-        color: #666;
-        margin-bottom: 12px;
-    }
-
-    .prop-summary-bar .chip {
-        padding: 3px 10px;
-        border-radius: 12px;
-        background: #e8f4fd;
         color: var(--primary-color);
-        font-weight: 500;
+        margin-top: 6px;
     }
 
-    .filter-row {
-        display: flex;
-        gap: 10px;
-        margin-bottom: 12px;
-        flex-wrap: wrap;
+    /* ─── JSON diff (Control vs Test) ─────────────────────────────── */
+    .endpoint-diff-rollup {
+        font-size: 0.82rem;
+        margin: 2px 0 10px;
+        font-weight: 600;
     }
+    .endpoint-diff-rollup.rollup-ok   { color: #2e7d32; }
+    .endpoint-diff-rollup.rollup-diff { color: #c62828; }
 
-    .filter-row input,
-    .filter-row select {
-        padding: 6px 10px;
+    .endpoint-diff-list { display: flex; flex-direction: column; gap: 4px; }
+
+    .endpoint-diff {
         border: 1px solid var(--border-color);
-        border-radius: 4px;
-        font-size: 0.88rem;
+        border-radius: 5px;
+        overflow: hidden;
+    }
+    .endpoint-diff > summary.endpoint-diff-summary {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 10px;
+        cursor: pointer;
+        background: #fafafa;
+        font-size: 0.82rem;
+    }
+    .endpoint-name {
+        font-weight: 600;
+        color: var(--primary-color);
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+    }
+    .diff-chip {
+        margin-left: auto;
+        padding: 1px 8px;
+        border-radius: 10px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #fff;
+        white-space: nowrap;
+    }
+    .diff-chip.chip-ok   { background: #2e7d32; }
+    .diff-chip.chip-diff { background: #c62828; }
+    .diff-chip.chip-warn { background: #b45309; }
+
+    .endpoint-diff-body .endpoint-block { margin: 0; border-radius: 0; }
+
+    .jd-block {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 8px 10px;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        font-size: 0.74rem;
+        line-height: 1.45;
+        max-height: 420px;
+        overflow: auto;
+    }
+    .jd-line { white-space: pre; }
+    .jd-same    { color: #d4d4d4; }
+    .jd-muted   { color: #7a7a7a; font-style: italic; }
+    .jd-control { color: #f08a8a; background: rgba(198, 40, 40, 0.18); }
+    .jd-test    { color: #9ece6a; background: rgba(46, 125, 50, 0.18); }
+
+    .jd-fold > summary { cursor: pointer; list-style: none; }
+    .jd-fold > summary::-webkit-details-marker { display: none; }
+
+    .jd-notice { padding: 6px 10px; font-size: 0.82rem; }
+    .jd-notice-warn { background: #fff4e0; color: #b45309; font-weight: 600; }
+    .jd-subhead {
+        padding: 5px 10px 2px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--primary-color);
     }
 
-    .filter-row input {
-        flex: 1;
-        min-width: 150px;
-    }
+    .probe-not-fetched { padding: 8px 12px; color: #888; font-size: 0.85rem; }
 </style>
 
 <div class="container">
@@ -180,26 +208,7 @@
             <div class="analysis-header">
                 <div>
                     <h2 style="margin-bottom: 8px;">
-                        @if (result.Matched)
-                        {
-                            <span class="badge badge-success">Match</span>
-                        }
-                        else if (result.RetryMatched == true)
-                        {
-                            <span class="badge badge-success">Match (on retry)</span>
-                        }
-                        else
-                        {
-                            <span class="badge badge-danger">Mismatch</span>
-                            @if (result.WasRetried && result.RetryMatched == false)
-                            {
-                                <span class="badge badge-danger" style="margin-left: 5px;">Confirmed</span>
-                            }
-                        }
-                        @if (result.HasPropertyDifferences)
-                        {
-                            <span class="badge badge-warning" style="margin-left: 5px;">Property Changes</span>
-                        }
+                        @RenderStatusBadge()
                     </h2>
                     <div class="analysis-params">
                         <span><strong>Service:</strong> @result.SearchServiceName</span>
@@ -209,240 +218,437 @@
                         <span><strong>Test:</strong> @Config.MrSixTest (@result.TestCount results)</span>
                     </div>
                 </div>
-                <div class="analysis-actions">
-                    @if (showCopied)
-                    {
-                        <span class="copy-feedback">Copied!</span>
-                    }
-                    <button class="btn btn-primary" @onclick="CopyAiContext" disabled="@isCopying">
-                        @(isCopying ? "Building..." : "Copy AI Context")
-                    </button>
-                </div>
             </div>
+            @if (isLoading)
+            {
+                <div style="text-align: center; padding: 12px;">
+                    <div class="spinner"></div>
+                    <p class="progress-line">@progressMessage</p>
+                </div>
+            }
         </div>
 
-        @if (result.OnlyInControl.Any() || result.OnlyInTest.Any() || result.IgnoredFromControl.Any() || result.IgnoredFromTest.Any())
+        <div class="card">
+            <h2 style="margin-bottom: 8px;">Searcher</h2>
+            @RenderUserCard(result.SearcherUserId, tier: "red", label: "Searcher")
+        </div>
+
+        @if (IsStackSearch())
         {
             <div class="card">
-                <h2>Set Differences</h2>
-                <div class="set-diff-grid">
-                    @if (result.OnlyInControl.Any())
+                <h2 style="margin-bottom: 4px;">Pool Diffs</h2>
+                <p style="color: #666; font-size: 0.88rem; margin-bottom: 12px;">
+                    Per-pool deltas between Control and Test pools.txt. Color tiers reflect global rank across all pools —
+                    top 10 red, next 20 amber, rest grey. Admin data is fetched for red &amp; amber users only.
+                </p>
+                @if (controlPools.Count == 0 && testPools.Count == 0 && !isLoading)
+                {
+                    <p style="color: #999;">No pools data available — pools.txt could not be fetched.</p>
+                }
+                else
+                {
+                    @foreach (var poolName in AllPoolNames())
                     {
-                        <div class="set-diff-card" style="border-left: 3px solid var(--danger-color);">
-                            <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count)</strong>
-                            <div style="margin-top: 6px; font-family: monospace; font-size: 0.85rem;">
-                                @RenderUserIdLinks(result.OnlyInControl)
+                        var cPool = controlPools.FirstOrDefault(p => p.Name == poolName);
+                        var tPool = testPools.FirstOrDefault(p => p.Name == poolName);
+                        var onlyInControl = (cPool?.UserIds ?? new()).Except(tPool?.UserIds ?? new()).ToList();
+                        var onlyInTest    = (tPool?.UserIds ?? new()).Except(cPool?.UserIds ?? new()).ToList();
+                        if (onlyInControl.Count == 0 && onlyInTest.Count == 0) continue;
+
+                        <details class="pool-card" open>
+                            <summary>
+                                Pool: @poolName
+                                <span style="font-weight: 400; color: #666; margin-left: 12px; font-size: 0.85rem;">
+                                    Control:@(cPool?.UserIds.Count ?? 0) | Test:@(tPool?.UserIds.Count ?? 0) |
+                                    only-in-Control:@onlyInControl.Count | only-in-Test:@onlyInTest.Count
+                                </span>
+                            </summary>
+                            <div class="pool-grid">
+                                <div>
+                                    <strong style="color: var(--danger-color);">Only in Control</strong>
+                                    @foreach (var uid in onlyInControl)
+                                    {
+                                        @RenderDeltaRow(uid, cPool?.UserIds.IndexOf(uid) ?? -1)
+                                    }
+                                </div>
+                                <div>
+                                    <strong style="color: var(--primary-color);">Only in Test</strong>
+                                    @foreach (var uid in onlyInTest)
+                                    {
+                                        @RenderDeltaRow(uid, tPool?.UserIds.IndexOf(uid) ?? -1)
+                                    }
+                                </div>
                             </div>
-                        </div>
+                        </details>
                     }
-                    @if (result.OnlyInTest.Any())
-                    {
-                        <div class="set-diff-card" style="border-left: 3px solid var(--primary-color);">
-                            <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count)</strong>
-                            <div style="margin-top: 6px; font-family: monospace; font-size: 0.85rem;">
-                                @RenderUserIdLinks(result.OnlyInTest)
-                            </div>
-                        </div>
-                    }
-                    <div class="set-diff-card" style="border-left: 3px solid var(--success-color);">
-                        <strong style="color: var(--success-color);">In Both (@result.InBoth.Count)</strong>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="card">
+                <h2 style="margin-bottom: 4px;">Result-set Diff</h2>
+                <p style="color: #666; font-size: 0.88rem; margin-bottom: 12px;">
+                    Users present on one side only. Color tiers reflect rank in the result list —
+                    top 10 red, next 20 amber, rest grey. Admin data is fetched for red &amp; amber users only.
+                </p>
+                <div class="pool-grid">
+                    <div>
+                        <strong style="color: var(--danger-color);">Only in Control (@result.OnlyInControl.Count)</strong>
+                        @foreach (var uid in result.OnlyInControl)
+                        {
+                            @RenderDeltaRow(uid, result.OnlyInControl.IndexOf(uid))
+                        }
                     </div>
-                    @if (result.IgnoredFromControl.Any() || result.IgnoredFromTest.Any())
-                    {
-                        <div class="set-diff-card" style="border-left: 3px solid var(--warning-color); opacity: 0.8;">
-                            <strong style="color: var(--warning-color);">Ignored - Data Movement (@(result.IgnoredFromControl.Count + result.IgnoredFromTest.Count))</strong>
-                            <div style="margin-top: 6px; font-family: monospace; font-size: 0.85rem;">
-                                @if (result.IgnoredFromControl.Any())
-                                {
-                                    <div>Control: @RenderUserIdLinks(result.IgnoredFromControl)</div>
-                                }
-                                @if (result.IgnoredFromTest.Any())
-                                {
-                                    <div>Test: @RenderUserIdLinks(result.IgnoredFromTest)</div>
-                                }
-                            </div>
-                        </div>
-                    }
+                    <div>
+                        <strong style="color: var(--primary-color);">Only in Test (@result.OnlyInTest.Count)</strong>
+                        @foreach (var uid in result.OnlyInTest)
+                        {
+                            @RenderDeltaRow(uid, result.OnlyInTest.IndexOf(uid))
+                        }
+                    </div>
                 </div>
             </div>
         }
-
-        <div class="card">
-            <h2>Property Differences</h2>
-            @if (result.PropertyDifferences.Any())
-            {
-                var affectedUsers = result.PropertyDifferences.Select(d => d.UserId).Distinct().Count();
-                var affectedProps = result.PropertyDifferences.Select(d => d.PropertyName).Distinct().OrderBy(p => p).ToList();
-
-                <div class="prop-summary-bar">
-                    <span>@result.PropertyDifferences.Count differences across @affectedUsers users</span>
-                    @foreach (var prop in affectedProps)
-                    {
-                        <span class="chip">@prop</span>
-                    }
-                </div>
-
-                <div class="filter-row">
-                    <input type="text" placeholder="Filter by UserId..." @bind="propFilterUserId" @bind:event="oninput" />
-                    <select @bind="propFilterProperty">
-                        <option value="">All Properties</option>
-                        @foreach (var prop in affectedProps)
-                        {
-                            <option value="@prop">@prop</option>
-                        }
-                    </select>
-                </div>
-
-                <div class="prop-diff-container">
-                    <table class="prop-diff-table">
-                        <thead>
-                            <tr>
-                                <th>UserId</th>
-                                <th>Property</th>
-                                <th>Control</th>
-                                <th>Test</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var diff in GetFilteredPropertyDiffs())
-                            {
-                                <tr>
-                                    <td>@diff.UserId</td>
-                                    <td style="font-family: 'Segoe UI', sans-serif; font-weight: 500;">@diff.PropertyName</td>
-                                    <td>@diff.ControlValue</td>
-                                    <td>@diff.TestValue</td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            }
-            else
-            {
-                <p style="color: #999;">No property-level differences detected for users present in both result sets.</p>
-            }
-        </div>
-
-        <div class="card">
-            <h2>Explains</h2>
-            @if (isLoadingExplains)
-            {
-                <div style="text-align: center; padding: 20px;">
-                    <div class="spinner"></div>
-                    <p style="color: var(--primary-color);">Fetching explains from servers...</p>
-                </div>
-            }
-            else if (controlExplain == null && testExplain == null)
-            {
-                <p style="color: #999;">
-                    Explains are not available. They are generated during retry runs with explain enabled.
-                    Ensure <strong>Auto-Retry Mismatches</strong> is turned on for explains to be captured on confirmed mismatches.
-                </p>
-            }
-            else
-            {
-                <div class="explain-grid">
-                    <div>
-                        <div class="explain-label">Control (@Config.MrSixControl)</div>
-                        <pre class="explain-pane">@(controlExplain ?? "Not available")</pre>
-                    </div>
-                    <div>
-                        <div class="explain-label">Test (@Config.MrSixTest)</div>
-                        <pre class="explain-pane">@(testExplain ?? "Not available")</pre>
-                    </div>
-                </div>
-            }
-        </div>
     }
 </div>
 
 @code {
-    [Parameter]
-    public Guid ResultId { get; set; }
+    [Parameter] public Guid ResultId { get; set; }
 
     private ComparisonResult? result;
-    private string? controlExplain;
-    private string? testExplain;
-    private bool isLoadingExplains;
-    private bool isCopying;
-    private bool showCopied;
-    private string propFilterUserId = "";
-    private string propFilterProperty = "";
+    private List<PoolBlock> controlPools = new();
+    private List<PoolBlock> testPools = new();
+
+    // userId -> tier ("red" | "amber" | "grey") and global rank.
+    private readonly Dictionary<int, DeltaTier> tierByUserId = new();
+
+    // userId -> per-server endpoint bodies. Missing key = not fetched (grey tier or out-of-cap).
+    private readonly Dictionary<int, UserProbe> probes = new();
+
+    // userId -> per-endpoint Control-vs-Test diffs, computed once after probes are fetched.
+    private readonly Dictionary<int, IReadOnlyList<EndpointDiffEntry>> diffsByUser = new();
+
+    private bool isLoading;
+    private string progressMessage = "";
+
+    // Color-tier cutoffs. Fetch admin data for red + amber only.
+    private const int RedCount = 10;
+    private const int AmberCount = 20;
+    private const int FetchCap = RedCount + AmberCount;
+
+    private bool IsStackSearch() =>
+        string.Equals(result?.SearchServiceName, "Stack", StringComparison.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
         result = StateService.GetResultById(ResultId);
+        if (result is null) return;
 
-        if (result != null && result.ControlCallId != Guid.Empty && result.TestCallId != Guid.Empty)
-        {
-            isLoadingExplains = true;
-            StateHasChanged();
-
-            var controlTask = ExplainService.FetchControlExplainAsync(result.ControlCallId);
-            var testTask = ExplainService.FetchTestExplainAsync(result.TestCallId);
-
-            await Task.WhenAll(controlTask, testTask);
-
-            controlExplain = controlTask.Result;
-            testExplain = testTask.Result;
-            isLoadingExplains = false;
-        }
-    }
-
-    private IEnumerable<PropertyDifference> GetFilteredPropertyDiffs()
-    {
-        if (result == null) return Enumerable.Empty<PropertyDifference>();
-
-        var diffs = result.PropertyDifferences.AsEnumerable();
-
-        if (!string.IsNullOrWhiteSpace(propFilterUserId))
-            diffs = diffs.Where(d => d.UserId.ToString().Contains(propFilterUserId));
-
-        if (!string.IsNullOrWhiteSpace(propFilterProperty))
-            diffs = diffs.Where(d => d.PropertyName == propFilterProperty);
-
-        return diffs.OrderBy(d => d.UserId).ThenBy(d => d.PropertyName);
-    }
-
-    private async Task CopyAiContext()
-    {
-        if (result == null) return;
-
-        isCopying = true;
+        isLoading = true;
         StateHasChanged();
 
         try
         {
-            if (controlExplain == null && testExplain == null && result.ControlCallId != Guid.Empty)
+            if (IsStackSearch())
             {
-                var controlTask = ExplainService.FetchControlExplainAsync(result.ControlCallId);
-                var testTask = ExplainService.FetchTestExplainAsync(result.TestCallId);
-                await Task.WhenAll(controlTask, testTask);
-                controlExplain = controlTask.Result;
-                testExplain = testTask.Result;
+                progressMessage = "Fetching pools.txt from Control and Test…";
+                StateHasChanged();
+
+                var ctrlTask = ExplainService.FetchExplainFileAsync(Config.MrSixControl, result.ControlCallId, "pools");
+                var testTask = ExplainService.FetchExplainFileAsync(Config.MrSixTest,    result.TestCallId,    "pools");
+                await Task.WhenAll(ctrlTask, testTask);
+
+                controlPools = PoolsExplainParser.Parse(ctrlTask.Result);
+                testPools    = PoolsExplainParser.Parse(testTask.Result);
             }
 
-            var prompt = AiContextBuilder.BuildPrompt(result, Config, controlExplain, testExplain);
-            await JS.InvokeVoidAsync("copyToClipboard", prompt);
+            // Rank deltas globally. For Stack, walk every pool in file order so the
+            // highest-in-pool delta gets the top global rank. For non-Stack, the
+            // OnlyInControl / OnlyInTest list order preserves the original result
+            // list order (LINQ Except is order-stable on the left operand).
+            var ranked = ComputeRankedDeltas();
+            AssignTiers(ranked);
 
-            showCopied = true;
-            StateHasChanged();
-            await Task.Delay(3000);
-            showCopied = false;
+            await FetchProbesForTopUsers();
         }
         finally
         {
-            isCopying = false;
+            isLoading = false;
+            progressMessage = "";
+            StateHasChanged();
         }
     }
 
-    private MarkupString RenderUserIdLinks(List<int> userIds, int max = 20)
+    private List<int> ComputeRankedDeltas()
     {
-        var links = userIds.Take(max).Select(id =>
-            $"<a href=\"https://kraken.i.mct360.com/six/UserInfo/{id}/{Config.MrSixControl},{Config.MrSixTest}\" target=\"_blank\" style=\"color: inherit; text-decoration: underline dotted; text-underline-offset: 2px;\" title=\"View {id} in Kraken\">{id}</a>");
-        var html = string.Join(", ", links);
-        if (userIds.Count > max)
-            html += $" ... ({userIds.Count - max} more)";
+        var ranked = new List<int>();
+        var seen = new HashSet<int>();
+
+        if (IsStackSearch())
+        {
+            foreach (var poolName in AllPoolNames())
+            {
+                var cPool = controlPools.FirstOrDefault(p => p.Name == poolName);
+                var tPool = testPools.FirstOrDefault(p => p.Name == poolName);
+                var cIds = cPool?.UserIds ?? new();
+                var tIds = tPool?.UserIds ?? new();
+                var cSet = new HashSet<int>(cIds);
+                var tSet = new HashSet<int>(tIds);
+
+                int max = Math.Max(cIds.Count, tIds.Count);
+                for (int i = 0; i < max; i++)
+                {
+                    if (i < cIds.Count && !tSet.Contains(cIds[i]) && seen.Add(cIds[i]))
+                        ranked.Add(cIds[i]);
+                    if (i < tIds.Count && !cSet.Contains(tIds[i]) && seen.Add(tIds[i]))
+                        ranked.Add(tIds[i]);
+                }
+            }
+        }
+        else if (result is not null)
+        {
+            int max = Math.Max(result.OnlyInControl.Count, result.OnlyInTest.Count);
+            for (int i = 0; i < max; i++)
+            {
+                if (i < result.OnlyInControl.Count && seen.Add(result.OnlyInControl[i]))
+                    ranked.Add(result.OnlyInControl[i]);
+                if (i < result.OnlyInTest.Count && seen.Add(result.OnlyInTest[i]))
+                    ranked.Add(result.OnlyInTest[i]);
+            }
+        }
+        return ranked;
+    }
+
+    private void AssignTiers(List<int> ranked)
+    {
+        tierByUserId.Clear();
+        for (int i = 0; i < ranked.Count; i++)
+        {
+            string tier = i < RedCount        ? "red"
+                        : i < RedCount + AmberCount ? "amber"
+                        : "grey";
+            tierByUserId[ranked[i]] = new DeltaTier(tier, i);
+        }
+    }
+
+    private async Task FetchProbesForTopUsers()
+    {
+        if (result is null) return;
+
+        var toFetch = new List<int> { result.SearcherUserId };
+        toFetch.AddRange(tierByUserId
+            .Where(kv => kv.Value.Tier != "grey")
+            .OrderBy(kv => kv.Value.Rank)
+            .Take(FetchCap)
+            .Select(kv => kv.Key));
+        toFetch = toFetch.Distinct().ToList();
+
+        progressMessage = $"Fetching admin data for {toFetch.Count} users on Control and Test…";
+        StateHasChanged();
+
+        foreach (var uid in toFetch)
+            probes[uid] = new UserProbe();
+
+        // Bulk V2 + V3 once per server; partition the response per-userId for the cards.
+        var v2CtrlTask = AdminProbeService.FetchUserDetailsV2ForListAsync(Config.MrSixControl, toFetch);
+        var v2TestTask = AdminProbeService.FetchUserDetailsV2ForListAsync(Config.MrSixTest,    toFetch);
+        var v3CtrlTask = AdminProbeService.FetchUserDetailsV3ForListAsync(Config.MrSixControl, toFetch);
+        var v3TestTask = AdminProbeService.FetchUserDetailsV3ForListAsync(Config.MrSixTest,    toFetch);
+
+        var perUserTasks = toFetch.Select(uid => FetchPerUserAsync(probes[uid], uid)).ToList();
+
+        await Task.WhenAll(v2CtrlTask, v2TestTask, v3CtrlTask, v3TestTask);
+        var v2Ctrl = PartitionBulkByUserId(v2CtrlTask.Result);
+        var v2Test = PartitionBulkByUserId(v2TestTask.Result);
+        var v3Ctrl = PartitionBulkByUserId(v3CtrlTask.Result);
+        var v3Test = PartitionBulkByUserId(v3TestTask.Result);
+
+        foreach (var uid in toFetch)
+        {
+            var probe = probes[uid];
+            probe.Control.UserDetailsV2 = v2Ctrl.TryGetValue(uid, out var a) ? a : v2CtrlTask.Result ?? "[no response]";
+            probe.Test.UserDetailsV2    = v2Test.TryGetValue(uid, out var b) ? b : v2TestTask.Result ?? "[no response]";
+            probe.Control.UserDetailsV3 = v3Ctrl.TryGetValue(uid, out var c) ? c : v3CtrlTask.Result ?? "[no response]";
+            probe.Test.UserDetailsV3    = v3Test.TryGetValue(uid, out var d) ? d : v3TestTask.Result ?? "[no response]";
+        }
+
+        await Task.WhenAll(perUserTasks);
+
+        BuildAllDiffs();
+    }
+
+    // Compute the Control-vs-Test structural diff for every fetched user's 6 endpoints, once,
+    // off the render path. Rendering then just walks the cached results.
+    private void BuildAllDiffs()
+    {
+        diffsByUser.Clear();
+        foreach (var (uid, probe) in probes)
+            diffsByUser[uid] = BuildDiffsForUser(probe);
+    }
+
+    private static IReadOnlyList<EndpointDiffEntry> BuildDiffsForUser(UserProbe probe)
+    {
+        var opts = JsonDiffOptions.Default;
+        return new List<EndpointDiffEntry>
+        {
+            new("getUserDetailsV2",      JsonDiff.Diff(probe.Control.UserDetailsV2, probe.Test.UserDetailsV2, opts)),
+            new("getUserDetailsV3",      JsonDiff.Diff(probe.Control.UserDetailsV3, probe.Test.UserDetailsV3, opts)),
+            new("getInteractions",       JsonDiff.Diff(probe.Control.Interactions,  probe.Test.Interactions,  opts)),
+            new("getBlocks?type=search", JsonDiff.Diff(probe.Control.BlocksSearch,  probe.Test.BlocksSearch,  opts)),
+            new("getBlocks?type=mutual", JsonDiff.Diff(probe.Control.BlocksMutual,  probe.Test.BlocksMutual,  opts)),
+            new("getBlocks?type=comm",   JsonDiff.Diff(probe.Control.BlocksComm,    probe.Test.BlocksComm,    opts)),
+        };
+    }
+
+    private async Task FetchPerUserAsync(UserProbe probe, int userId)
+    {
+        var iCtrl = AdminProbeService.FetchInteractionsAsync(Config.MrSixControl, userId);
+        var iTest = AdminProbeService.FetchInteractionsAsync(Config.MrSixTest,    userId);
+        var bsCtrl = AdminProbeService.FetchBlocksAsync(Config.MrSixControl, userId, "search");
+        var bsTest = AdminProbeService.FetchBlocksAsync(Config.MrSixTest,    userId, "search");
+        var bmCtrl = AdminProbeService.FetchBlocksAsync(Config.MrSixControl, userId, "mutual");
+        var bmTest = AdminProbeService.FetchBlocksAsync(Config.MrSixTest,    userId, "mutual");
+        var bcCtrl = AdminProbeService.FetchBlocksAsync(Config.MrSixControl, userId, "comm");
+        var bcTest = AdminProbeService.FetchBlocksAsync(Config.MrSixTest,    userId, "comm");
+
+        await Task.WhenAll(iCtrl, iTest, bsCtrl, bsTest, bmCtrl, bmTest, bcCtrl, bcTest);
+
+        probe.Control.Interactions = iCtrl.Result;
+        probe.Test.Interactions    = iTest.Result;
+        probe.Control.BlocksSearch = bsCtrl.Result;
+        probe.Test.BlocksSearch    = bsTest.Result;
+        probe.Control.BlocksMutual = bmCtrl.Result;
+        probe.Test.BlocksMutual    = bmTest.Result;
+        probe.Control.BlocksComm   = bcCtrl.Result;
+        probe.Test.BlocksComm      = bcTest.Result;
+    }
+
+    // Best-effort partition of a *ForList JSON response into per-userId chunks.
+    // Tries plain JArray, then a handful of common envelope keys. Falls back to
+    // empty dictionary if the response isn't an obvious array-of-user-objects,
+    // and the per-user cards display the full bulk blob in that case.
+    private static Dictionary<int, string> PartitionBulkByUserId(string? json)
+    {
+        var result = new Dictionary<int, string>();
+        if (string.IsNullOrWhiteSpace(json)) return result;
+
+        try
+        {
+            var token = JToken.Parse(json);
+            JArray? array = token switch
+            {
+                JArray a => a,
+                JObject o when o["users"] is JArray a2 => a2,
+                JObject o when o["Users"] is JArray a3 => a3,
+                JObject o when o["data"]  is JArray a4 => a4,
+                JObject o when o["Data"]  is JArray a5 => a5,
+                _ => null
+            };
+            if (array is null) return result;
+
+            foreach (var entry in array.OfType<JObject>())
+            {
+                var idTok = entry["UserId"] ?? entry["userId"] ?? entry["userid"];
+                if (idTok is null) continue;
+                if (!int.TryParse(idTok.ToString(), out var id)) continue;
+                result[id] = entry.ToString(Formatting.Indented);
+            }
+        }
+        catch
+        {
+            // Swallow — caller renders the full bulk blob.
+        }
+        return result;
+    }
+
+    // ─── Rendering ──────────────────────────────────────────────────────
+
+    private IEnumerable<string> AllPoolNames()
+    {
+        var seen = new HashSet<string>();
+        foreach (var p in controlPools) if (seen.Add(p.Name)) yield return p.Name;
+        foreach (var p in testPools)    if (seen.Add(p.Name)) yield return p.Name;
+    }
+
+    private MarkupString RenderStatusBadge()
+    {
+        if (result is null) return new MarkupString("");
+        var html = result.Matched
+            ? "<span class=\"badge badge-success\">Match</span>"
+            : result.RetryMatched == true
+                ? "<span class=\"badge badge-success\">Match (on retry)</span>"
+                : "<span class=\"badge badge-danger\">Mismatch</span>" +
+                  (result.WasRetried && result.RetryMatched == false
+                      ? " <span class=\"badge badge-danger\">Confirmed</span>"
+                      : "");
+        if (result.HasPropertyDifferences)
+            html += " <span class=\"badge badge-warning\">Property Changes</span>";
         return new MarkupString(html);
+    }
+
+    private RenderFragment RenderDeltaRow(int userId, int positionInList) => builder =>
+    {
+        var tier = tierByUserId.TryGetValue(userId, out var t) ? t.Tier : "grey";
+        var rank = tierByUserId.TryGetValue(userId, out var t2) ? t2.Rank : -1;
+        var badgeLabel = tier == "red" ? "TOP" : tier == "amber" ? "MID" : "LOW";
+
+        builder.OpenElement(0, "details");
+        builder.AddAttribute(1, "class", $"delta-row tier-{tier}");
+
+        builder.OpenElement(2, "summary");
+        var summaryHtml =
+            $"<span class=\"tier-badge tier-{tier}\">{badgeLabel}</span> " +
+            $"<strong>{userId}</strong> " +
+            $"<span style=\"color:#666; font-size:0.8rem;\">position {(positionInList >= 0 ? positionInList.ToString() : "?")}" +
+            (rank >= 0 ? $", global rank {rank}" : "") + "</span>";
+        builder.AddMarkupContent(3, summaryHtml);
+        builder.CloseElement(); // summary
+
+        builder.AddContent(4, RenderUserProbe(userId));
+        builder.CloseElement(); // details
+    };
+
+    private RenderFragment RenderUserCard(int userId, string tier, string label) => builder =>
+    {
+        builder.OpenElement(0, "details");
+        builder.AddAttribute(1, "class", "user-card");
+
+        builder.OpenElement(2, "summary");
+        builder.AddMarkupContent(3,
+            $"<span class=\"tier-badge tier-{tier}\">{label}</span> <strong>{userId}</strong>");
+        builder.CloseElement(); // summary
+
+        builder.AddContent(4, RenderUserProbe(userId));
+        builder.CloseElement(); // details
+    };
+
+    // Mounts the diff card for a user. Endpoints == null (user outside the fetch cap) renders the
+    // "not fetched" notice inside the component.
+    private RenderFragment RenderUserProbe(int userId) => builder =>
+    {
+        builder.OpenComponent<UserProbeView>(0);
+        builder.AddAttribute(1, nameof(UserProbeView.UserId), userId);
+        builder.AddAttribute(2, nameof(UserProbeView.Endpoints),
+            diffsByUser.TryGetValue(userId, out var endpoints) ? endpoints : null);
+        builder.CloseComponent();
+    };
+
+    private sealed record DeltaTier(string Tier, int Rank);
+
+    private sealed class UserProbe
+    {
+        public PerServerProbe Control { get; } = new();
+        public PerServerProbe Test    { get; } = new();
+    }
+
+    private sealed class PerServerProbe
+    {
+        public string? UserDetailsV2 { get; set; }
+        public string? UserDetailsV3 { get; set; }
+        public string? Interactions  { get; set; }
+        public string? BlocksSearch  { get; set; }
+        public string? BlocksMutual  { get; set; }
+        public string? BlocksComm    { get; set; }
     }
 }

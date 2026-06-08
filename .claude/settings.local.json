@@ -4,7 +4,13 @@
       "Bash(grep -E \"\\\\.\\(razor|cs\\)$\")",
       "Bash(Get-ChildItem -Path \"C:\\\\Work\\\\_git\\\\MrSixComparator\" -Recurse -Directory)",
       "Bash(Select-Object -ExpandProperty FullName)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Bash(git diff *)",
+      "Bash(dotnet build *)",
+      "PowerShell(dotnet sln *)",
+      "PowerShell(dotnet test *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Work\\\\_git\\\\MrSixComparator\" -Filter \"*Test*\" -Recurse -Type f)",
+      "Bash(Select-Object -First 20)"
     ]
   }
 }

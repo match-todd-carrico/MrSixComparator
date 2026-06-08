@@ -26,6 +26,13 @@ public class AppConfiguration
     // When populated, the SQL adds "And lg.SiteCode In (...)" to keep the load focused.
     public HashSet<short> SiteCodeFilter { get; set; } = new HashSet<short>();
 
+    // Per-service WhatIfSearchId exclusions, driven by the Search Services tree UI.
+    // Key = ClassName, Value = WhatIfSearchIds the user has explicitly unchecked.
+    // Missing key or empty value = include every WhatIfSearchId for that service.
+    // Applied at dispatch time alongside the SiteCode filter.
+    public Dictionary<string, HashSet<int>> WhatIfSearchIdExclusionsByService { get; set; } =
+        new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+
     // Configuration for which search services are enabled
     public HashSet<string> EnabledSearchServices { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {

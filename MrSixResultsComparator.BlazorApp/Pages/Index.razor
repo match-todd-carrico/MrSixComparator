@@ -436,7 +436,10 @@
         else
         {
         <h3 style="margin: 0 0 10px 0;">Search Services</h3>
-        <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">Enable or disable search services for the comparison run</p>
+        <p style="color: #666; margin-bottom: 15px; font-size: 0.9rem;">
+            Enable services for the comparison run. WhatIfSearchType leaves are auto-discovered
+            from the parameter cache and let you exclude specific IDs per service.
+        </p>
         <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
             <button class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px;" @onclick="EnableAllServices" disabled="@(StateService.IsRunning || isInitializing)">
                 ✓ Enable All
@@ -445,23 +448,22 @@
                 ✗ Disable All
             </button>
         </div>
-        <div class="services-grid" style="grid-template-columns: repeat(2, 1fr); max-height: 280px; overflow-y: auto;">
-            @foreach (var serviceName in GetAllSearchServices())
+
+        var serviceTree = BuildServiceTree();
+        var cacheLoaded = StateService.CachedSearchParameters != null && StateService.CachedSearchParameters.Any();
+        var willRunCount = GetCombinedFilteredCount();
+        <div class="service-tree" style="max-height: 420px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 12px;">
+            @foreach (var child in serviceTree.Children)
             {
-                var isEnabled = Config.EnabledSearchServices.Contains(serviceName);
-                <div class="service-toggle">
-                    <label>
-                        <input type="checkbox" 
-                               checked="@isEnabled" 
-                               @onchange="@((e) => ToggleService(serviceName, (bool)(e.Value ?? false)))"
-                               disabled="@(StateService.IsRunning || isInitializing)" />
-                        <span class="@(isEnabled ? "service-enabled" : "service-disabled")">@serviceName</span>
-                    </label>
-                </div>
+                @RenderTreeNode(child, depth: 0)
             }
         </div>
         <div style="margin-top: 10px; padding: 10px; background-color: #f0f0f0; border-radius: 4px;">
-            <strong>Enabled:</strong> @Config.EnabledSearchServices.Count of @GetAllSearchServices().Count
+            <strong>Enabled:</strong> @Config.EnabledSearchServices.Count of @GetAllSearchServices().Count services
+            @if (cacheLoaded)
+            {
+                <span style="margin-left: 12px;"><strong>Will run:</strong> @willRunCount parameter(s) after all filters</span>
+            }
         </div>
         }
 
@@ -794,7 +796,7 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        @foreach (var result in siteGroup.OrderBy(r => IsEffectiveMatch(r)).ThenBy(r => r.SearcherUserId))
+                                        @foreach (var result in siteGroup.OrderByDescending(r => SlotDiffCount(r)).ThenBy(r => IsEffectiveMatch(r)).ThenBy(r => r.SearcherUserId))
                                         {
                                             <tr>
                                                 <td>
@@ -983,7 +985,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach (var result in siteGroup.OrderBy(r => IsEffectiveMatch(r)).ThenBy(r => r.SearcherUserId))
+                                @foreach (var result in siteGroup.OrderByDescending(r => SlotDiffCount(r)).ThenBy(r => IsEffectiveMatch(r)).ThenBy(r => r.SearcherUserId))
                                 {
                                     <tr>
                                         <td>
@@ -1333,7 +1335,9 @@
     private List<string> allSearchServices = new List<string>
     {
         "Stack",
+        "Sticker",
         "SearchV4.OnePush",
+        "SearchV4.KeywordSearch",
         "SearchV4.TwoWay",
         "SearchV4.Reverse",
         "SearchV4.MoreLikeThis",
@@ -1345,6 +1349,21 @@
         "SearchV4.Recommended.JustForYou",
         "SearchV4.Recommended.MatchPicks"
     };
+
+    // Synthetic top-level group label for services whose ClassName has no dotted prefix
+    // (Stack, Sticker). Other services group under their first dotted segment naturally.
+    private const string StackFamilyGroupLabel = "Stack family";
+
+    private sealed class ServiceTreeNode
+    {
+        public string Label { get; init; } = "";
+        public string? ClassName { get; init; }      // set for service nodes
+        public int? WhatIfSearchId { get; init; }    // set for ID leaves
+        public List<ServiceTreeNode> Children { get; } = new();
+        public bool IsGroup => ClassName is null && WhatIfSearchId is null;
+        public bool IsServiceNode => ClassName is not null && WhatIfSearchId is null;
+        public bool IsIdLeaf => WhatIfSearchId is not null;
+    }
 
     protected override void OnInitialized()
     {
@@ -1526,6 +1545,237 @@
         return StateService.CachedSearchParameters.Count(p => Config.SiteCodeFilter.Contains(p.SiteCode));
     }
 
+    // ─── Service tree (services × WhatIfSearchIds) ────────────────────────
+
+    private ServiceTreeNode BuildServiceTree()
+    {
+        var root = new ServiceTreeNode { Label = "root" };
+
+        // Pre-index cached parameters by ClassName for the WhatIfSearchId discovery.
+        var idsByClass = StateService.CachedSearchParameters?
+            .GroupBy(p => p.ClassName ?? "")
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(p => p.WhatIfSearchId).Distinct().OrderBy(id => id).ToList(),
+                StringComparer.OrdinalIgnoreCase)
+            ?? new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var className in allSearchServices)
+        {
+            var parts = className.Split('.');
+            ServiceTreeNode parent;
+            string leafName;
+
+            if (parts.Length == 1)
+            {
+                parent = GetOrAddGroup(root, StackFamilyGroupLabel);
+                leafName = parts[0];
+            }
+            else
+            {
+                parent = root;
+                for (int i = 0; i < parts.Length - 1; i++)
+                    parent = GetOrAddGroup(parent, parts[i]);
+                leafName = parts[^1];
+            }
+
+            var serviceNode = new ServiceTreeNode { Label = leafName, ClassName = className };
+            parent.Children.Add(serviceNode);
+
+            if (idsByClass.TryGetValue(className, out var ids))
+            {
+                foreach (var id in ids)
+                {
+                    serviceNode.Children.Add(new ServiceTreeNode
+                    {
+                        Label = $"{NameForWhatIfSearchId(id)} ({id})",
+                        ClassName = className,
+                        WhatIfSearchId = id
+                    });
+                }
+            }
+        }
+        return root;
+    }
+
+    private static ServiceTreeNode GetOrAddGroup(ServiceTreeNode parent, string label)
+    {
+        var existing = parent.Children.FirstOrDefault(c => c.IsGroup && c.Label == label);
+        if (existing is not null) return existing;
+        var node = new ServiceTreeNode { Label = label };
+        parent.Children.Add(node);
+        return node;
+    }
+
+    private static string NameForWhatIfSearchId(int id) =>
+        Enum.IsDefined(typeof(SearchTypeId), id)
+            ? ((SearchTypeId)id).ToString()
+            : $"WhatIfSearchId {id}";
+
+    // Tri-state computed from leaves. For groups, aggregates over descendants.
+    // For service nodes, "checked" requires EnabledSearchServices AND no descendant
+    // IDs in the exclusion set. Returns (checkedCount, totalLeafCount).
+    private (int Checked, int Total) AggregateLeafState(ServiceTreeNode node)
+    {
+        if (node.IsIdLeaf)
+        {
+            var serviceEnabled = Config.EnabledSearchServices.Contains(node.ClassName!);
+            var excluded = Config.WhatIfSearchIdExclusionsByService.TryGetValue(node.ClassName!, out var ex)
+                && ex.Contains(node.WhatIfSearchId!.Value);
+            return (serviceEnabled && !excluded ? 1 : 0, 1);
+        }
+
+        if (node.IsServiceNode && node.Children.Count == 0)
+        {
+            // Service leaf — no WhatIfSearchId children discovered.
+            return (Config.EnabledSearchServices.Contains(node.ClassName!) ? 1 : 0, 1);
+        }
+
+        // Group node or service node with children — aggregate descendants.
+        int c = 0, t = 0;
+        foreach (var child in node.Children)
+        {
+            var (cc, tt) = AggregateLeafState(child);
+            c += cc; t += tt;
+        }
+        return (c, t);
+    }
+
+    // Toggle helpers — leaf, service node, and cascading group node.
+
+    private void ToggleIdLeaf(string className, int searchTypeId, bool isChecked)
+    {
+        if (!Config.WhatIfSearchIdExclusionsByService.TryGetValue(className, out var ex))
+        {
+            ex = new HashSet<int>();
+            Config.WhatIfSearchIdExclusionsByService[className] = ex;
+        }
+
+        if (isChecked)
+            ex.Remove(searchTypeId);
+        else
+            ex.Add(searchTypeId);
+
+        // Ticking a child re-enables the service if it had been turned off.
+        if (isChecked)
+            Config.EnabledSearchServices.Add(className);
+
+        StateHasChanged();
+    }
+
+    private void ToggleServiceNode(ServiceTreeNode node, bool isChecked)
+    {
+        // Checking the service clears any leaf exclusions so "all children run."
+        // Unchecking just disables the service but preserves the user's prior
+        // per-ID selections, so re-enabling restores them.
+        if (isChecked)
+        {
+            Config.EnabledSearchServices.Add(node.ClassName!);
+            if (Config.WhatIfSearchIdExclusionsByService.TryGetValue(node.ClassName!, out var ex))
+                ex.Clear();
+        }
+        else
+        {
+            Config.EnabledSearchServices.Remove(node.ClassName!);
+        }
+        StateHasChanged();
+    }
+
+    private void ToggleGroupNode(ServiceTreeNode group, bool isChecked)
+    {
+        foreach (var descendantService in EnumerateServiceDescendants(group))
+            ToggleServiceNode(descendantService, isChecked);
+    }
+
+    private static IEnumerable<ServiceTreeNode> EnumerateServiceDescendants(ServiceTreeNode node)
+    {
+        foreach (var child in node.Children)
+        {
+            if (child.IsServiceNode)
+                yield return child;
+            else if (child.IsGroup)
+                foreach (var n in EnumerateServiceDescendants(child))
+                    yield return n;
+        }
+    }
+
+    // Dispatch-time filter combining service-enabled + per-(service, ID) exclusions.
+    // Used in StartComparison to pre-compute the parameter set and in the UI to show
+    // the "X parameter(s) will run" indicator.
+    private List<SearchParameter> ApplyServiceTreeFilter(IEnumerable<SearchParameter> parameters)
+    {
+        return parameters.Where(p =>
+        {
+            if (!Config.EnabledSearchServices.Contains(p.ClassName))
+                return false;
+            return !Config.WhatIfSearchIdExclusionsByService
+                .TryGetValue(p.ClassName, out var ex) || !ex.Contains(p.WhatIfSearchId);
+        }).ToList();
+    }
+
+    private int GetCombinedFilteredCount()
+    {
+        if (StateService.CachedSearchParameters == null)
+            return 0;
+        return ApplyServiceTreeFilter(ApplySiteCodeFilter(StateService.CachedSearchParameters)).Count;
+    }
+
+    // Renders one tree node with the right checkbox state + cascade handler for its
+    // kind (leaf / service / group). Recursively renders children below it.
+    private RenderFragment RenderTreeNode(ServiceTreeNode node, int depth) => builder =>
+    {
+        var (chk, total) = AggregateLeafState(node);
+        var isChecked   = chk == total && total > 0;
+        var isPartial   = chk > 0 && chk < total;
+        var labelStyle  = isPartial
+            ? "color: #b45309; font-weight: 600;"  // amber/bold for partial state
+            : isChecked ? "" : "color: #888;";
+        var disabled    = StateService.IsRunning || isInitializing;
+        var indent      = depth * 18;
+
+        // Parent service may be disabled — grey out the ID leaves visually.
+        var idLeafDisabled = node.IsIdLeaf
+            && !Config.EnabledSearchServices.Contains(node.ClassName!);
+
+        builder.OpenElement(0, "div");
+        builder.AddAttribute(1, "style", $"margin-left: {indent}px; padding: 2px 0;");
+
+        builder.OpenElement(2, "label");
+        builder.AddAttribute(3, "style", "display: inline-flex; align-items: center; gap: 6px; cursor: pointer;");
+
+        builder.OpenElement(4, "input");
+        builder.AddAttribute(5, "type", "checkbox");
+        builder.AddAttribute(6, "checked", isChecked);
+        builder.AddAttribute(7, "disabled", disabled || idLeafDisabled);
+        builder.AddAttribute(8, "onchange",
+            Microsoft.AspNetCore.Components.EventCallback.Factory.Create<ChangeEventArgs>(this, e =>
+            {
+                var toChecked = (bool)(e.Value ?? false);
+                if (node.IsIdLeaf)
+                    ToggleIdLeaf(node.ClassName!, node.WhatIfSearchId!.Value, toChecked);
+                else if (node.IsServiceNode)
+                    ToggleServiceNode(node, toChecked);
+                else
+                    ToggleGroupNode(node, toChecked);
+            }));
+        builder.CloseElement(); // input
+
+        builder.OpenElement(9, "span");
+        builder.AddAttribute(10, "style", labelStyle);
+        builder.AddContent(11, node.Label);
+        if (isPartial)
+            builder.AddContent(12, $" ({chk}/{total})");
+        builder.CloseElement(); // span
+
+        builder.CloseElement(); // label
+
+        // Children
+        foreach (var child in node.Children)
+            builder.AddContent(13, RenderTreeNode(child, depth + 1));
+
+        builder.CloseElement(); // div
+    };
+
     private async Task RefreshSearchParameters()
     {
         try
@@ -1691,18 +1941,25 @@
                 throw new InvalidOperationException("Failed to load search parameters");
             }
             
-            // Apply the SiteCode filter at dispatch time so the cache can stay shard-wide.
-            var runParameters = ApplySiteCodeFilter(StateService.CachedSearchParameters);
+            // Apply the SiteCode filter + the Search Services tree (service enabled + per-ID exclusions)
+            // at dispatch time so the cache itself can stay shard-wide.
+            var runParameters = ApplyServiceTreeFilter(ApplySiteCodeFilter(StateService.CachedSearchParameters));
             if (!runParameters.Any())
             {
+                var excludedIdsSummary = Config.WhatIfSearchIdExclusionsByService
+                    .Where(kv => kv.Value.Count > 0)
+                    .Select(kv => $"{kv.Key}=[{string.Join(",", kv.Value.OrderBy(i => i))}]");
                 throw new InvalidOperationException(
-                    $"SiteCode filter excluded every cached parameter. Cached: {StateService.CachedSearchParameters.Count}, Selected SiteCodes: {(Config.SiteCodeFilter.Count == 0 ? "all" : string.Join(",", Config.SiteCodeFilter.OrderBy(s => s)))}");
+                    $"Filters excluded every cached parameter. Cached: {StateService.CachedSearchParameters.Count}, " +
+                    $"SiteCodes: {(Config.SiteCodeFilter.Count == 0 ? "all" : string.Join(",", Config.SiteCodeFilter.OrderBy(s => s)))}, " +
+                    $"Enabled services: {Config.EnabledSearchServices.Count}, " +
+                    $"WhatIfSearchId exclusions: {(excludedIdsSummary.Any() ? string.Join("; ", excludedIdsSummary) : "none")}");
             }
-            
-            var filterSuffix = Config.SiteCodeFilter.Count == 0
+
+            var siteFilterSuffix = Config.SiteCodeFilter.Count == 0
                 ? ""
-                : $" (filtered to SiteCodes {string.Join(",", Config.SiteCodeFilter.OrderBy(s => s))})";
-            StateService.SetProgress(0, runParameters.Count, $"Loaded {runParameters.Count} of {StateService.CachedSearchParameters.Count} search parameters{filterSuffix}");
+                : $" (SiteCodes {string.Join(",", Config.SiteCodeFilter.OrderBy(s => s))})";
+            StateService.SetProgress(0, runParameters.Count, $"Loaded {runParameters.Count} of {StateService.CachedSearchParameters.Count} search parameters{siteFilterSuffix}");
 
             // Execute comparisons
             var comparisonService = new ComparisonService(
@@ -1967,6 +2224,14 @@
                 r.OnlyInControlBySlotType.ContainsKey(selectedSlotType) ||
                 r.OnlyInTestBySlotType.ContainsKey(selectedSlotType))
             .ToList();
+    }
+
+    private int SlotDiffCount(ComparisonResult r)
+    {
+        if (string.IsNullOrWhiteSpace(selectedSlotType)) return 0;
+        var control = r.OnlyInControlBySlotType.TryGetValue(selectedSlotType, out var c) ? c.Count : 0;
+        var test    = r.OnlyInTestBySlotType.TryGetValue(selectedSlotType,    out var t) ? t.Count : 0;
+        return control + test;
     }
 
     private async Task PollAdminStateAsync(CancellationToken cancellationToken)

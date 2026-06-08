@@ -1,0 +1,46 @@
+@using MrSixResultsComparator.Core.Diffing
+
+@*
+    A user's admin-probe card: a one-line rollup of where the mismatch is, then one collapsible
+    EndpointDiff per endpoint. Endpoints is null when the user was outside the fetch cap.
+*@
+
+@if (Endpoints is null)
+{
+    <div class="probe-not-fetched">Not in top 30 — admin data not fetched.</div>
+}
+else
+{
+    <div class="endpoint-diff-rollup @(AnyDifferent ? "rollup-diff" : "rollup-ok")">@RollupText()</div>
+    <div class="endpoint-diff-list">
+        @foreach (var ep in Endpoints)
+        {
+            <EndpointDiff Label="@ep.Label" Result="@ep.Result" />
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public int UserId { get; set; }
+    [Parameter] public IReadOnlyList<EndpointDiffEntry>? Endpoints { get; set; }
+
+    private bool AnyDifferent => Endpoints?.Any(e => !e.Result.Identical) ?? false;
+
+    private string RollupText()
+    {
+        if (Endpoints is null || Endpoints.Count == 0) return "";
+
+        var changed = Endpoints.Where(e => !e.Result.Identical).ToList();
+        if (changed.Count == 0)
+            return $"All {Endpoints.Count} endpoints identical between Control and Test.";
+
+        var names = string.Join(", ", changed.Select(e => e.Label));
+        int totalDiffs = changed.Sum(e => e.Result.ChangeCount);
+
+        if (totalDiffs == 0)
+            return $"{changed.Count} endpoint(s) differ (error / non-JSON): {names}";
+
+        var word = totalDiffs == 1 ? "difference" : "differences";
+        return $"{totalDiffs} {word} across {changed.Count} endpoint(s): {names}";
+    }
+}

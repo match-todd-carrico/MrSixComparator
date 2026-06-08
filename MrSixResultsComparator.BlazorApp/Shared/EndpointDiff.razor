@@ -1,0 +1,139 @@
+@using MrSixResultsComparator.Core.Diffing
+
+@*
+    Renders one admin endpoint's Control-vs-Test diff as a collapsible card. Identical endpoints
+    collapse with a green chip; differing ones open by default. The structural diff is shown as a
+    unified merged tree (git-style - / + lines); degraded modes fall back to raw side-by-side.
+*@
+
+<details class="endpoint-diff" open="@StartOpen">
+    <summary class="endpoint-diff-summary">
+        <span class="endpoint-name">@Label</span>
+        <span class="diff-chip @ChipClass">@ChipText</span>
+    </summary>
+    <div class="endpoint-diff-body">
+        @switch (Result.Mode)
+        {
+            case DiffMode.Structural:
+                @if (Result.Tree is { HasChange: true })
+                {
+                    <div class="jd-block">
+                        @foreach (var item in _renderItems)
+                        {
+                            @if (item is DiffLine dl)
+                            {
+                                <div class="jd-line @LineClass(dl)">@dl.Text</div>
+                            }
+                            else if (item is FoldGroup fg)
+                            {
+                                <details class="jd-fold">
+                                    <summary class="jd-line jd-muted">    ▸ @fg.Lines.Count unchanged field(s)</summary>
+                                    @foreach (var ln in fg.Lines)
+                                    {
+                                        <div class="jd-line @LineClass(ln)">@ln.Text</div>
+                                    }
+                                </details>
+                            }
+                        }
+                    </div>
+                }
+                else
+                {
+                    <pre class="endpoint-block jd-identical">@JsonDiff.PrettyPrintOrRaw(Result.RawControl)</pre>
+                }
+                break;
+
+            case DiffMode.SingleSide:
+                <div class="jd-notice jd-notice-warn">@Result.Notice</div>
+                <div class="jd-subhead">Control</div>
+                <pre class="endpoint-block">@JsonDiff.PrettyPrintOrRaw(Result.RawControl)</pre>
+                <div class="jd-subhead">Test</div>
+                <pre class="endpoint-block">@JsonDiff.PrettyPrintOrRaw(Result.RawTest)</pre>
+                break;
+
+            case DiffMode.BothNonJson:
+                <div class="jd-notice">@Result.Notice</div>
+                @if (!Result.Identical)
+                {
+                    <div class="jd-subhead">Control</div>
+                    <pre class="endpoint-block">@(Result.RawControl ?? "[empty]")</pre>
+                    <div class="jd-subhead">Test</div>
+                    <pre class="endpoint-block">@(Result.RawTest ?? "[empty]")</pre>
+                }
+                else
+                {
+                    <pre class="endpoint-block">@(Result.RawControl ?? "[empty]")</pre>
+                }
+                break;
+        }
+    </div>
+</details>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = "";
+    [Parameter, EditorRequired] public EndpointDiffResult Result { get; set; } = default!;
+
+    private const int FoldThreshold = 3;
+
+    private IReadOnlyList<object> _renderItems = Array.Empty<object>();
+
+    private bool StartOpen => !Result.Identical;
+
+    protected override void OnParametersSet()
+    {
+        _renderItems = Result.Mode == DiffMode.Structural && Result.Tree is { HasChange: true } tree
+            ? BuildRenderItems(JsonDiff.Flatten(tree))
+            : Array.Empty<object>();
+    }
+
+    // Group maximal runs of foldable (unchanged) lines so the UI can collapse them; render the rest inline.
+    private static IReadOnlyList<object> BuildRenderItems(IReadOnlyList<DiffLine> lines)
+    {
+        var items = new List<object>();
+        var buffer = new List<DiffLine>();
+
+        void Flush()
+        {
+            if (buffer.Count == 0) return;
+            if (buffer.Count >= FoldThreshold) items.Add(new FoldGroup(new List<DiffLine>(buffer)));
+            else items.AddRange(buffer);
+            buffer.Clear();
+        }
+
+        foreach (var ln in lines)
+        {
+            if (ln.Foldable) { buffer.Add(ln); }
+            else { Flush(); items.Add(ln); }
+        }
+        Flush();
+        return items;
+    }
+
+    private sealed record FoldGroup(IReadOnlyList<DiffLine> Lines);
+
+    private string ChipClass => Result.Mode switch
+    {
+        DiffMode.Structural => Result.Identical ? "chip-ok" : "chip-diff",
+        DiffMode.BothNonJson => Result.Identical ? "chip-ok" : "chip-warn",
+        _ => "chip-warn",
+    };
+
+    private string ChipText => Result.Mode switch
+    {
+        DiffMode.Structural => Result.Identical
+            ? "identical"
+            : $"{Result.ChangeCount} {(Result.ChangeCount == 1 ? "difference" : "differences")}",
+        DiffMode.SingleSide => "one side errored",
+        DiffMode.BothNonJson => Result.Identical ? "identical (non-JSON)" : "non-JSON differs",
+        _ => "",
+    };
+
+    private static string LineClass(DiffLine ln) => ln.Muted
+        ? "jd-muted"
+        : ln.Status switch
+        {
+            DiffStatus.ControlOnly => "jd-control",
+            DiffStatus.TestOnly => "jd-test",
+            _ => "jd-same",
+        };
+}

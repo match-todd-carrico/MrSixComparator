@@ -38,5 +38,6 @@
         ,DatingStackV2=67
         ,StickerSearchV2=68
         ,TopPicksV2=69
+        ,DatingChivalrySearch=70
     }
 }
